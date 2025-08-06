@@ -9,7 +9,6 @@ from datetime import datetime
 
 # --- Bloco 1: Lógica Principal da Conciliação (sem alterações) ---
 def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
-    # --- Processamento do Relatório Contábil ---
     df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1')
     if "Unidade Gestora" in df_report.columns[0]:
         df_report.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
@@ -30,7 +29,6 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     df_report.dropna(subset=['Conta_Chave'], inplace=True)
     df_report['Conta_Chave'] = df_report['Conta_Chave'].astype(int)
 
-    # Separar saldos de Movimento e Aplicação do relatório
     df_movimento_contabil = df_report[df_report['Conta_Contabil'].str.contains('111111901', na=False)]
     df_movimento_contabil = df_movimento_contabil.groupby('Conta_Chave')['Saldo_Final'].sum().reset_index()
     df_movimento_contabil.rename(columns={'Saldo_Final': 'Saldo_Contabil_Movimento'}, inplace=True)
@@ -39,10 +37,8 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     df_aplicacao_contabil = df_aplicacao_contabil.groupby('Conta_Chave')['Saldo_Final'].sum().reset_index()
     df_aplicacao_contabil.rename(columns={'Saldo_Final': 'Saldo_Contabil_Aplicacao'}, inplace=True)
 
-    # Juntar os saldos contábeis pela chave da conta
     df_report_pivot = pd.merge(df_movimento_contabil, df_aplicacao_contabil, on='Conta_Chave', how='outer')
 
-    # --- Processamento do Extrato Consolidado ---
     dados_extrato = []
     stringio = io.StringIO(arquivo_extrato_consolidado.getvalue().decode('latin-1'))
     next(stringio)
@@ -77,7 +73,6 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     }).reset_index()
     df_extrato_pivot.rename(columns={'Conta': 'Conta_Bancaria'}, inplace=True)
 
-    # --- Consolidação Final ---
     df_final = pd.merge(df_report_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
     df_final.fillna(0, inplace=True)
 
@@ -86,10 +81,16 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     
     colunas_para_arredondar = ['Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento', 'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao']
     for col in colunas_para_arredondar:
-        if col in df_final.columns: # Verificação extra
+        if col in df_final.columns:
             df_final[col] = df_final[col].round(2)
         
     colunas_finais = ['Conta_Bancaria', 'Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento', 'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao']
+    
+    # Garante que todas as colunas finais existam, preenchendo com 0 se alguma não for criada
+    for col in colunas_finais:
+        if col not in df_final.columns:
+            df_final[col] = 0
+            
     df_final = df_final[colunas_finais]
     
     return df_final
@@ -130,7 +131,7 @@ class PDF(FPDF):
             self.ln()
 
 def create_pdf(df):
-    pdf = PDF('L', 'mm', 'A4') # 'L' para paisagem (landscape)
+    pdf = PDF('L', 'mm', 'A4')
     pdf.add_page()
     pdf.create_table(df)
     return bytes(pdf.output())
@@ -151,12 +152,6 @@ if arquivo_relatorio_carregado and arquivo_extrato_consolidado_carregado:
                 df_resultado = realizar_conciliacao(arquivo_relatorio_carregado, arquivo_extrato_consolidado_carregado)
                 st.success("Conciliação Concluída com Sucesso!")
                 st.session_state['df_resultado'] = df_resultado
-
-                # --- BLOCO DE DEPURAÇÃO ---
-                st.subheader("DEBUG: Colunas do DataFrame Final")
-                st.write(df_resultado.columns.tolist())
-                # --- FIM DO BLOCO DE DEPURAÇÃO ---
-
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
 else:
@@ -166,15 +161,18 @@ if 'df_resultado' in st.session_state:
     df_final = st.session_state['df_resultado']
     st.header("Resultado da Conciliação Consolidada")
     
-    df_para_mostrar = df_final[(df_final['Diferenca_Movimento'].abs() > 0.01) | (df_final['Diferenca_Aplicacao'].abs() > 0.01)].copy()
-    
-    if df_para_mostrar.empty:
-        st.success("Ótima notícia! Nenhuma divergência encontrada.")
-    else:
-        st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
+    # AJUSTE DE SEGURANÇA: Verifica se a tabela não está vazia ANTES de tentar filtrar
+    if not df_final.empty:
+        df_para_mostrar = df_final[(df_final['Diferenca_Movimento'].abs() > 0.01) | (df_final['Diferenca_Aplicacao'].abs() > 0.01)].copy()
         
-        formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.select_dtypes(include=np.number).columns}
-        st.dataframe(df_para_mostrar.style.format(formatter=formatters).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=['Diferenca_Movimento', 'Diferenca_Aplicacao']))
+        if df_para_mostrar.empty:
+            st.success("Ótima notícia! Nenhuma divergência encontrada.")
+        else:
+            st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
+            formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.select_dtypes(include=np.number).columns}
+            st.dataframe(df_para_mostrar.style.format(formatter=formatters).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=['Diferenca_Movimento', 'Diferenca_Aplicacao']))
+    else:
+        st.warning("O processamento não resultou em dados para exibir. Verifique se os arquivos de entrada contêm contas correspondentes.")
 
     st.header("Download do Relatório Completo")
     st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
