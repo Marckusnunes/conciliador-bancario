@@ -83,12 +83,17 @@ class PDF(FPDF):
         self.set_font('Arial', 'B', 8)
         col_widths = [65, 30, 30, 30]
         headers = list(data.columns)
+        # Formata os números antes de passá-los para o PDF
+        formatted_data = data.copy()
+        for col in ['Saldo_Final', 'Saldo_Extrato', 'Diferenca']:
+            formatted_data[col] = formatted_data[col].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
+        
         for i, header in enumerate(headers):
             self.cell(col_widths[i], 10, header, 1)
         self.ln()
         
         self.set_font('Arial', '', 8)
-        for index, row in data.iterrows():
+        for index, row in formatted_data.iterrows():
             for i, item in enumerate(row):
                 self.cell(col_widths[i], 10, str(item), 1)
             self.ln()
@@ -103,9 +108,7 @@ def create_pdf(df):
 # --- Bloco 3: Interface Web com Streamlit ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide")
 
-# MUDANÇA 1: Título alterado.
 st.title("Ferramenta de Conciliação de Saldos Bancários")
-# MUDANÇA 2: Subtítulo removido.
 
 st.sidebar.header("1. Carregar Arquivos")
 arquivo_relatorio_carregado = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV Original)", type=['csv'])
@@ -124,25 +127,26 @@ if arquivo_relatorio_carregado and lista_extratos_carregados:
 else:
     st.sidebar.warning("Por favor, carregue o relatório e pelo menos um extrato.")
 
-# Se o resultado existir, mostre a tabela e os botões de download
 if 'df_resultado' in st.session_state:
     df_final = st.session_state['df_resultado']
     
     st.header("Resultado da Conciliação")
     
-    # MUDANÇA 4: Filtrar para mostrar apenas as linhas com diferença
     df_para_mostrar = df_final[df_final['Diferenca'] != 0].copy()
     
     if df_para_mostrar.empty:
         st.success("Ótima notícia! Nenhuma divergência encontrada. Todos os saldos foram conciliados.")
     else:
         st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-        # MUDANÇA 3: Formatar os números para o padrão brasileiro na visualização
-        st.dataframe(df_para_mostrar.style.format({
-            'Saldo_Final': 'R$ {:,.2f}',
-            'Saldo_Extrato': 'R$ {:,.2f}',
-            'Diferenca': 'R$ {:,.2f}'
-        }).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=['Diferenca']))
+        
+        # MUDANÇA FINAL: Formatação dos números para o padrão brasileiro (xxx.xxx,xx) e sem moeda.
+        st.dataframe(df_para_mostrar.style.format(
+            formatter={
+                'Saldo_Final': lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."),
+                'Saldo_Extrato': lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."),
+                'Diferenca': lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")
+            }
+        ).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=['Diferenca']))
 
     st.header("Download do Relatório Completo")
     st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
