@@ -8,6 +8,7 @@ from fpdf import FPDF
 from datetime import datetime
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
+# MUDANÇA: A função agora retorna a tabela "plana", antes da formatação final.
 def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     # --- Processamento do Relatório Contábil ---
     df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1')
@@ -39,8 +40,6 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     df_aplicacao_contabil.rename(columns={'Saldo_Final': 'Saldo_Contabil_Aplicacao'}, inplace=True)
 
     df_report_pivot = pd.merge(df_movimento_contabil, df_aplicacao_contabil, on='Conta_Chave', how='outer')
-
-    # Guardar a descrição do Domicílio Bancário para usar como identificador final
     mapa_domicilio = df_report[['Conta_Chave', 'Domicilio_Bancario']].drop_duplicates().set_index('Conta_Chave')
 
     # --- Processamento do Extrato Consolidado ---
@@ -73,14 +72,12 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     df_extrato_pivot['Conta_Chave'] = df_extrato_pivot['Conta_Chave'].astype(int)
     df_extrato_pivot = df_extrato_pivot.groupby('Conta_Chave').sum().reset_index()
 
-    # --- Consolidação e Reestruturação Final ---
+    # --- Consolidação Final ---
     df_final = pd.merge(df_report_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
     df_final.fillna(0, inplace=True)
-    
-    # Mapear de volta o Domicílio Bancário
     df_final = df_final.join(mapa_domicilio, on='Conta_Chave')
     df_final['Domicilio_Bancario'].fillna('Não encontrado no relatório', inplace=True)
-    df_final = df_final[df_final['Conta_Chave'] != 0] # Remove linhas sem chave válida
+    df_final = df_final[df_final['Conta_Chave'] != 0]
 
     df_final['Diferenca_Movimento'] = df_final['Saldo_Contabil_Movimento'] - df_final['Saldo_Extrato_Movimento']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Contabil_Aplicacao'] - df_final['Saldo_Extrato_Aplicacao']
@@ -88,21 +85,12 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     colunas_para_arredondar = df_final.select_dtypes(include=np.number).columns.drop('Conta_Chave', errors='ignore')
     for col in colunas_para_arredondar:
         df_final[col] = df_final[col].round(2)
-    
-    df_final = df_final.set_index('Domicilio_Bancario')
-    df_final = df_final[[
-        'Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento',
-        'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao'
-    ]]
-    
-    df_final.columns = pd.MultiIndex.from_tuples([
-        ('Conta Movimento', 'Saldo Contábil'),
-        ('Conta Movimento', 'Saldo Extrato'),
-        ('Conta Movimento', 'Diferença'),
-        ('Aplicação Financeira', 'Saldo Contábil'),
-        ('Aplicação Financeira', 'Saldo Extrato'),
-        ('Aplicação Financeira', 'Diferença')
-    ], names=['Grupo', 'Item']) # Nomes dos níveis do cabeçalho
+        
+    colunas_finais = ['Domicilio_Bancario', 'Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento', 'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao']
+    for col in colunas_finais:
+        if col not in df_final.columns:
+            df_final[col] = 0
+    df_final = df_final[colunas_finais]
     
     return df_final
 
@@ -111,7 +99,6 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
 def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # Escreve o DataFrame com o MultiIndex no Excel
         df.to_excel(writer, index=True, sheet_name='Conciliacao_Consolidada')
     return output.getvalue()
 
@@ -149,7 +136,6 @@ class PDF(FPDF):
              formatted_data[col_tuple] = formatted_data[col_tuple].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
 
         for index, row in formatted_data.iterrows():
-            # Truncar o Domicílio Bancário para caber
             display_index = (index[:35] + '...') if len(str(index)) > 35 else index
             self.cell(55, line_height, str(display_index), 1, 0, 'L')
             for item in row:
@@ -184,19 +170,27 @@ else:
     st.sidebar.warning("Por favor, carregue o relatório e o extrato consolidado.")
 
 if 'df_resultado' in st.session_state:
-    df_final = st.session_state['df_resultado']
+    df_plano = st.session_state['df_resultado']
+    
+    # MUDANÇA: Aplica a formatação de colunas agrupadas aqui, antes de qualquer outra operação.
+    df_formatado = df_plano.set_index('Domicilio_Bancario')
+    df_formatado.columns = pd.MultiIndex.from_tuples([
+        ('Conta Movimento', 'Saldo Contábil'), ('Conta Movimento', 'Saldo Extrato'), ('Conta Movimento', 'Diferença'),
+        ('Aplicação Financeira', 'Saldo Contábil'), ('Aplicação Financeira', 'Saldo Extrato'), ('Aplicação Financeira', 'Diferença')
+    ], names=['Grupo', 'Item'])
+    
     st.header("Resultado da Conciliação Consolidada")
     
-    df_para_mostrar = df_final[
-        (df_final[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
-        (df_final[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
+    # Usa o novo df_formatado para filtrar
+    df_para_mostrar = df_formatado[
+        (df_formatado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
+        (df_formatado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
     ].copy()
     
     if df_para_mostrar.empty:
         st.success("Ótima notícia! Nenhuma divergência encontrada.")
     else:
         st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-        
         formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
         st.dataframe(df_para_mostrar.style.format(formatter=formatters).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')]))
 
@@ -204,8 +198,9 @@ if 'df_resultado' in st.session_state:
     st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.download_button("Baixar em CSV", df_final.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
+        # Usa o df_formatado para o download para manter a consistência
+        st.download_button("Baixar em CSV", df_formatado.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
     with col2:
-        st.download_button("Baixar em Excel", to_excel(df_final), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        st.download_button("Baixar em Excel", to_excel(df_formatado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     with col3:
-        st.download_button("Baixar em PDF", create_pdf(df_final), 'relatorio_consolidado.pdf', 'application/pdf')
+        st.download_button("Baixar em PDF", create_pdf(df_formatado), 'relatorio_consolidado.pdf', 'application/pdf')
