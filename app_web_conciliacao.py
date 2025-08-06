@@ -4,13 +4,12 @@ import re
 import io
 
 # --- Bloco 1: A Lógica Principal da Conciliação ---
-# Documentação: Esta função contém a lógica de processamento.
 def realizar_conciliacao(arquivo_relatorio, lista_extratos):
     # Carregar e preparar o relatório
-    df_report = pd.read_csv(arquivo_relatorio, sep=';', decimal=',')
+    # LINHA CORRIGIDA: Adicionado encoding='latin-1' para ler corretamente os acentos.
+    df_report = pd.read_csv(arquivo_relatorio, sep=';', decimal=',', encoding='latin-1')
 
     def extrair_conta_chave(texto_conta):
-        # Expressão regular para encontrar uma sequência de 7 ou mais dígitos
         match = re.search(r'\d{7,}', str(texto_conta))
         return int(match.group(0)) if match else None
 
@@ -21,7 +20,6 @@ def realizar_conciliacao(arquivo_relatorio, lista_extratos):
     # Carregar e preparar os extratos bancários (múltiplos)
     lista_df_extratos = []
     for extrato_file in lista_extratos:
-        # Lemos o extrato do banco
         df = pd.read_csv(extrato_file, sep=';', encoding='latin-1', decimal=',')
         lista_df_extratos.append(df)
 
@@ -59,14 +57,11 @@ def realizar_conciliacao(arquivo_relatorio, lista_extratos):
     return df_reconciliation
 
 # --- Bloco 2: Construção da Interface Web com Streamlit ---
-# Documentação: Aqui montamos a página da web.
-
 st.set_page_config(page_title="Conciliador Bancário", layout="wide")
 
 st.title("Ferramenta de Conciliação Bancária")
 st.write("Uma aplicação para comparar o relatório contábil com os extratos bancários.")
 
-# Barra lateral para fazer o upload dos arquivos
 st.sidebar.header("1. Carregar Arquivos")
 
 arquivo_relatorio_carregado = st.sidebar.file_uploader(
@@ -82,23 +77,17 @@ lista_extratos_carregados = st.sidebar.file_uploader(
 
 st.sidebar.header("2. Processar")
 
-# O botão de conciliar só funciona se os arquivos forem carregados
 if arquivo_relatorio_carregado and lista_extratos_carregados:
     if st.sidebar.button("Conciliar Agora"):
         with st.spinner("Processando... Cruzando informações dos arquivos..."):
             try:
-                # Chama a função de lógica
                 df_resultado = realizar_conciliacao(arquivo_relatorio_carregado, lista_extratos_carregados)
 
                 st.success("Conciliação Concluída com Sucesso!")
-
                 st.header("Resultado da Conciliação")
                 st.write("A tabela abaixo mostra a comparação entre os saldos. A coluna 'Diferenca' indica as divergências.")
-
-                # Mostra o DataFrame interativo na tela
                 st.dataframe(df_resultado)
 
-                # Armazena o resultado para que o botão de download funcione
                 st.session_state['df_resultado'] = df_resultado
 
             except Exception as e:
@@ -106,11 +95,9 @@ if arquivo_relatorio_carregado and lista_extratos_carregados:
 else:
     st.sidebar.warning("Por favor, carregue o relatório e pelo menos um extrato.")
 
-# Botão de Download (só aparece depois que a conciliação é feita)
 if 'df_resultado' in st.session_state:
     st.header("Download do Relatório")
 
-    # Função para converter o DataFrame para CSV em memória
     @st.cache_data
     def convert_df_to_csv(df):
         return df.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig')
