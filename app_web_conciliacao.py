@@ -7,7 +7,7 @@ import numpy as np
 from fpdf import FPDF
 from datetime import datetime
 
-# --- Bloco 1: Lógica Principal da Conciliação (reestruturada) ---
+# --- Bloco 1: Lógica Principal da Conciliação (sem alterações) ---
 def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     # --- Processamento do Relatório Contábil ---
     df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1')
@@ -71,7 +71,7 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     df_extrato_pivot = df_extrato[['Conta_Chave', 'Conta', 'Saldo_Extrato_Movimento', 'Saldo_Extrato_Aplicacao']].dropna(subset=['Conta_Chave'])
     df_extrato_pivot['Conta_Chave'] = df_extrato_pivot['Conta_Chave'].astype(int)
     df_extrato_pivot = df_extrato_pivot.groupby('Conta_Chave').agg({
-        'Conta': 'first', # Pega a primeira descrição da conta
+        'Conta': 'first',
         'Saldo_Extrato_Movimento': 'sum',
         'Saldo_Extrato_Aplicacao': 'sum'
     }).reset_index()
@@ -81,21 +81,20 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     df_final = pd.merge(df_report_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
     df_final.fillna(0, inplace=True)
 
-    # Cálculo das diferenças
     df_final['Diferenca_Movimento'] = df_final['Saldo_Contabil_Movimento'] - df_final['Saldo_Extrato_Movimento']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Contabil_Aplicacao'] - df_final['Saldo_Extrato_Aplicacao']
     
-    # Arredondamento e seleção de colunas finais
     colunas_para_arredondar = ['Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento', 'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao']
     for col in colunas_para_arredondar:
-        df_final[col] = df_final[col].round(2)
+        if col in df_final.columns: # Verificação extra
+            df_final[col] = df_final[col].round(2)
         
     colunas_finais = ['Conta_Bancaria', 'Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento', 'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao']
     df_final = df_final[colunas_finais]
     
     return df_final
 
-# --- Bloco 2: Funções para Geração de Arquivos ---
+# --- Bloco 2: Funções para Geração de Arquivos (sem alterações) ---
 @st.cache_data
 def to_excel(df):
     output = io.BytesIO()
@@ -152,6 +151,12 @@ if arquivo_relatorio_carregado and arquivo_extrato_consolidado_carregado:
                 df_resultado = realizar_conciliacao(arquivo_relatorio_carregado, arquivo_extrato_consolidado_carregado)
                 st.success("Conciliação Concluída com Sucesso!")
                 st.session_state['df_resultado'] = df_resultado
+
+                # --- BLOCO DE DEPURAÇÃO ---
+                st.subheader("DEBUG: Colunas do DataFrame Final")
+                st.write(df_resultado.columns.tolist())
+                # --- FIM DO BLOCO DE DEPURAÇÃO ---
+
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
 else:
@@ -168,7 +173,6 @@ if 'df_resultado' in st.session_state:
     else:
         st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
         
-        # Formatação para a nova estrutura de colunas
         formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.select_dtypes(include=np.number).columns}
         st.dataframe(df_para_mostrar.style.format(formatter=formatters).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=['Diferenca_Movimento', 'Diferenca_Aplicacao']))
 
