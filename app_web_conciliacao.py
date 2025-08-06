@@ -8,7 +8,6 @@ from fpdf import FPDF
 from datetime import datetime
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
-# MUDANÇA: A função agora retorna a tabela "plana", antes da formatação final.
 def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     # --- Processamento do Relatório Contábil ---
     df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1')
@@ -60,12 +59,15 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
         df_extrato[col] = pd.to_numeric(df_extrato[col], errors='coerce').fillna(0)
     df_extrato.rename(columns={'Saldo_Corrente': 'Saldo_Extrato_Movimento', 'Saldo_Aplicado': 'Saldo_Extrato_Aplicacao'}, inplace=True)
 
+    # MUDANÇA: Função de extração da chave do extrato corrigida
     def extrair_conta_chave_extrato(texto_conta):
         try:
-            numeros = re.sub(r'[\.\-]', '', str(texto_conta).split('-')[0])
+            # Remove todos os caracteres não numéricos (pontos, traços, etc.)
+            numeros = re.sub(r'\D', '', str(texto_conta))
             return int(numeros) if numeros else None
         except (ValueError, IndexError):
             return None
+            
     df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_conta_chave_extrato)
     
     df_extrato_pivot = df_extrato[['Conta_Chave', 'Saldo_Extrato_Movimento', 'Saldo_Extrato_Aplicacao']].dropna(subset=['Conta_Chave'])
@@ -86,11 +88,20 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     for col in colunas_para_arredondar:
         df_final[col] = df_final[col].round(2)
         
-    colunas_finais = ['Domicilio_Bancario', 'Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento', 'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao']
-    for col in colunas_finais:
-        if col not in df_final.columns:
-            df_final[col] = 0
-    df_final = df_final[colunas_finais]
+    df_final = df_final.set_index('Domicilio_Bancario')
+    df_final = df_final[[
+        'Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento',
+        'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao'
+    ]]
+    
+    df_final.columns = pd.MultiIndex.from_tuples([
+        ('Conta Movimento', 'Saldo Contábil'),
+        ('Conta Movimento', 'Saldo Extrato'),
+        ('Conta Movimento', 'Diferença'),
+        ('Aplicação Financeira', 'Saldo Contábil'),
+        ('Aplicação Financeira', 'Saldo Extrato'),
+        ('Aplicação Financeira', 'Diferença')
+    ], names=['Grupo', 'Item'])
     
     return df_final
 
@@ -117,7 +128,9 @@ class PDF(FPDF):
         col_width = 30 
         
         self.set_font('Arial', 'B', 8)
-        self.cell(55, line_height, 'Domicílio Bancário', 1, 0, 'C')
+        # Usa o nome do índice (Domicilio Bancario)
+        index_name = data.index.name if data.index.name else 'ID'
+        self.cell(55, line_height, index_name, 1, 0, 'C')
         self.cell(col_width * 3, line_height, 'Conta Movimento', 1, 0, 'C')
         self.cell(col_width * 3, line_height, 'Aplicação Financeira', 1, 0, 'C')
         self.ln(line_height)
@@ -161,30 +174,21 @@ if arquivo_relatorio_carregado and arquivo_extrato_consolidado_carregado:
     if st.sidebar.button("Conciliar Agora"):
         with st.spinner("Processando..."):
             try:
-                df_resultado = realizar_conciliacao(arquivo_relatorio_carregado, arquivo_extrato_consolidado_carregado)
+                df_resultado_formatado = realizar_conciliacao(arquivo_relatorio_carregado, arquivo_extrato_consolidado_carregado)
                 st.success("Conciliação Concluída com Sucesso!")
-                st.session_state['df_resultado'] = df_resultado
+                st.session_state['df_resultado'] = df_resultado_formatado # Armazena o DataFrame já formatado
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
 else:
     st.sidebar.warning("Por favor, carregue o relatório e o extrato consolidado.")
 
 if 'df_resultado' in st.session_state:
-    df_plano = st.session_state['df_resultado']
-    
-    # MUDANÇA: Aplica a formatação de colunas agrupadas aqui, antes de qualquer outra operação.
-    df_formatado = df_plano.set_index('Domicilio_Bancario')
-    df_formatado.columns = pd.MultiIndex.from_tuples([
-        ('Conta Movimento', 'Saldo Contábil'), ('Conta Movimento', 'Saldo Extrato'), ('Conta Movimento', 'Diferença'),
-        ('Aplicação Financeira', 'Saldo Contábil'), ('Aplicação Financeira', 'Saldo Extrato'), ('Aplicação Financeira', 'Diferença')
-    ], names=['Grupo', 'Item'])
-    
+    df_final_formatado = st.session_state['df_resultado']
     st.header("Resultado da Conciliação Consolidada")
     
-    # Usa o novo df_formatado para filtrar
-    df_para_mostrar = df_formatado[
-        (df_formatado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
-        (df_formatado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
+    df_para_mostrar = df_final_formatado[
+        (df_final_formatado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
+        (df_final_formatado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
     ].copy()
     
     if df_para_mostrar.empty:
@@ -198,9 +202,8 @@ if 'df_resultado' in st.session_state:
     st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
     col1, col2, col3 = st.columns(3)
     with col1:
-        # Usa o df_formatado para o download para manter a consistência
-        st.download_button("Baixar em CSV", df_formatado.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
+        st.download_button("Baixar em CSV", df_final_formatado.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
     with col2:
-        st.download_button("Baixar em Excel", to_excel(df_formatado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        st.download_button("Baixar em Excel", to_excel(df_final_formatado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     with col3:
-        st.download_button("Baixar em PDF", create_pdf(df_formatado), 'relatorio_consolidado.pdf', 'application/pdf')
+        st.download_button("Baixar em PDF", create_pdf(df_final_formatado), 'relatorio_consolidado.pdf', 'application/pdf')
