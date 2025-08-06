@@ -5,7 +5,7 @@ import io
 from fpdf import FPDF
 from datetime import datetime
 
-# --- Bloco 1: Lógica Principal da Conciliação ---
+# --- Bloco 1: Lógica Principal da Conciliação (sem alterações) ---
 def realizar_conciliacao(arquivo_relatorio, lista_extratos):
     # Etapa de limpeza automática do relatório
     df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1')
@@ -66,7 +66,7 @@ def to_excel(df):
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
-        self.cell(0, 10, 'Relatório de Conciliação Bancária', 0, 1, 'C')
+        self.cell(0, 10, 'Relatório de Conciliação de Saldos Bancários', 0, 1, 'C')
         self.ln(10)
 
     def footer(self):
@@ -98,14 +98,14 @@ def create_pdf(df):
     pdf.add_page()
     pdf.chapter_title(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     pdf.create_table(df)
-    # CORREÇÃO FINAL E DEFINITIVA: Converte o 'bytearray' para o formato 'bytes'.
     return bytes(pdf.output())
 
 # --- Bloco 3: Interface Web com Streamlit ---
-st.set_page_config(page_title="Conciliador Bancário", layout="wide")
-# TÍTULO ALTERADO PARA VERIFICAÇÃO VISUAL DA ATUALIZAÇÃO
-st.title("VERSÃO DEFINITIVA - Conciliador Bancário")
-st.write("Uma aplicação para comparar o relatório contábil com os extratos bancários.")
+st.set_page_config(page_title="Conciliação Bancária", layout="wide")
+
+# MUDANÇA 1: Título alterado.
+st.title("Ferramenta de Conciliação de Saldos Bancários")
+# MUDANÇA 2: Subtítulo removido.
 
 st.sidebar.header("1. Carregar Arquivos")
 arquivo_relatorio_carregado = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV Original)", type=['csv'])
@@ -118,17 +118,34 @@ if arquivo_relatorio_carregado and lista_extratos_carregados:
             try:
                 df_resultado = realizar_conciliacao(arquivo_relatorio_carregado, lista_extratos_carregados)
                 st.success("Conciliação Concluída com Sucesso!")
-                st.header("Resultado da Conciliação")
-                st.dataframe(df_resultado)
                 st.session_state['df_resultado'] = df_resultado
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
 else:
     st.sidebar.warning("Por favor, carregue o relatório e pelo menos um extrato.")
 
+# Se o resultado existir, mostre a tabela e os botões de download
 if 'df_resultado' in st.session_state:
-    st.header("Download do Relatório")
     df_final = st.session_state['df_resultado']
+    
+    st.header("Resultado da Conciliação")
+    
+    # MUDANÇA 4: Filtrar para mostrar apenas as linhas com diferença
+    df_para_mostrar = df_final[df_final['Diferenca'] != 0].copy()
+    
+    if df_para_mostrar.empty:
+        st.success("Ótima notícia! Nenhuma divergência encontrada. Todos os saldos foram conciliados.")
+    else:
+        st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
+        # MUDANÇA 3: Formatar os números para o padrão brasileiro na visualização
+        st.dataframe(df_para_mostrar.style.format({
+            'Saldo_Final': 'R$ {:,.2f}',
+            'Saldo_Extrato': 'R$ {:,.2f}',
+            'Diferenca': 'R$ {:,.2f}'
+        }).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=['Diferenca']))
+
+    st.header("Download do Relatório Completo")
+    st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
     
     col1, col2, col3 = st.columns(3)
 
