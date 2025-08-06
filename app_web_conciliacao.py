@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import io
+import csv
 from fpdf import FPDF
 from datetime import datetime
 
@@ -28,37 +29,42 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     df_report = df_report[['Conta_Chave', 'Conta_Corrente', 'Saldo_Final']].dropna(subset=['Conta_Chave'])
     df_report['Conta_Chave'] = df_report['Conta_Chave'].astype(int)
 
-    # --- Lógica dos extratos bancários REESCRITA para o novo arquivo consolidado ---
-    # 1. Ler o novo arquivo consolidado, que usa vírgula como separador
-    df_extrato = pd.read_csv(arquivo_extrato_consolidado, sep=',', encoding='latin-1')
-    # Remove uma coluna extra vazia que pode aparecer
-    df_extrato = df_extrato.loc[:, ~df_extrato.columns.str.contains('^Unnamed')]
+    # --- Lógica dos extratos bancários REESCRITA com leitor manual ---
+    # 1. Ler o arquivo de forma manual para lidar com o formato inconsistente
+    dados_extrato = []
+    # Decodifica o arquivo carregado para que a biblioteca csv possa lê-lo como texto
+    stringio = io.StringIO(arquivo_extrato_consolidado.getvalue().decode('latin-1'))
+    # Pula a primeira linha (cabeçalho)
+    next(stringio) 
+    # Usa o leitor de CSV para separar os campos corretamente
+    reader = csv.reader(stringio, quotechar='"', delimiter=',')
+    for row in reader:
+        if len(row) >= 6: # Garante que a linha tem colunas suficientes
+            dados_extrato.append(row[:6]) # Pega apenas as 6 primeiras colunas
 
-    # 2. Limpar os nomes das colunas
-    df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado']
+    # 2. Cria o DataFrame a partir dos dados lidos manualmente
+    colunas_extrato = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado']
+    df_extrato = pd.DataFrame(dados_extrato, columns=colunas_extrato)
     
-    # 3. Limpar e converter as colunas de saldo para número
+    # O restante da lógica de limpeza e cálculo permanece o mesmo
     colunas_saldo_extrato = ['Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado']
     for col in colunas_saldo_extrato:
         df_extrato[col] = df_extrato[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
         df_extrato[col] = pd.to_numeric(df_extrato[col], errors='coerce').fillna(0)
     
-    # 4. Criar o Saldo Total do Extrato somando as colunas
     df_extrato['Saldo_Extrato'] = df_extrato['Saldo_Corrente'] + df_extrato['Saldo_Invest'] + df_extrato['Saldo_Aplicado']
 
-    # 5. Criar a Conta_Chave a partir da coluna "Conta" (ex: "5.253-1" -> 52531)
     def extrair_conta_chave_extrato(texto_conta):
         try:
-            return int(re.sub(r'[\.\-]', '', str(texto_conta).split('-')[0]))
+            numeros = re.sub(r'[\.\-]', '', str(texto_conta).split('-')[0])
+            return int(numeros) if numeros else None
         except (ValueError, IndexError):
             return None
             
     df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_conta_chave_extrato)
     
-    # 6. Preparar o DataFrame final do extrato para a junção
     df_final_balances = df_extrato[['Conta_Chave', 'Saldo_Extrato']].dropna(subset=['Conta_Chave'])
     df_final_balances['Conta_Chave'] = df_final_balances['Conta_Chave'].astype(int)
-    # Agrupar para o caso de a mesma conta aparecer mais de uma vez
     df_final_balances = df_final_balances.groupby('Conta_Chave')['Saldo_Extrato'].sum().reset_index()
 
     # --- Lógica da conciliação (sem alterações) ---
@@ -115,14 +121,12 @@ def create_pdf(df):
     pdf.create_table(df)
     return bytes(pdf.output())
 
-# --- Bloco 3: Interface Web com Streamlit (com pequena alteração) ---
+# --- Bloco 3: Interface Web com Streamlit (sem alterações) ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide")
 st.title("Ferramenta de Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
 arquivo_relatorio_carregado = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV Original)", type=['csv'])
-
-# ALTERAÇÃO: Trocado o seletor de múltiplos arquivos por um seletor de arquivo único.
 arquivo_extrato_consolidado_carregado = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV)", type=['csv'])
 
 st.sidebar.header("2. Processar")
@@ -130,7 +134,6 @@ if arquivo_relatorio_carregado and arquivo_extrato_consolidado_carregado:
     if st.sidebar.button("Conciliar Agora"):
         with st.spinner("Processando..."):
             try:
-                # Passa o novo arquivo único para a função de lógica
                 df_resultado = realizar_conciliacao(arquivo_relatorio_carregado, arquivo_extrato_consolidado_carregado)
                 st.success("Conciliação Concluída com Sucesso!")
                 st.session_state['df_resultado'] = df_resultado
