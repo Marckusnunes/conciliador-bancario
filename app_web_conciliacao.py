@@ -3,12 +3,13 @@ import pandas as pd
 import re
 import io
 import csv
+import numpy as np
 from fpdf import FPDF
 from datetime import datetime
 
 # --- Bloco 1: Lógica Principal da Conciliação (com ajustes) ---
 def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
-    # Etapa de limpeza automática do relatório (sem alterações)
+    # --- Processamento do Relatório Contábil ---
     df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1')
     if "Unidade Gestora" in df_report.columns[0]:
         df_report.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
@@ -21,38 +22,33 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
             df_report[col] = df_report[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
             df_report[col] = pd.to_numeric(df_report[col], errors='coerce')
     
+    contas_de_interesse = ['111111901', '111115001']
+    df_report = df_report[df_report['Conta_Contabil'].str.contains('|'.join(contas_de_interesse), na=False)].copy()
+
     def extrair_conta_chave_report(texto_conta):
         match = re.search(r'\d{7,}', str(texto_conta))
         return int(match.group(0)) if match else None
 
     df_report['Conta_Chave'] = df_report['Conta_Corrente'].apply(extrair_conta_chave_report)
-    df_report = df_report[['Conta_Chave', 'Conta_Corrente', 'Saldo_Final']].dropna(subset=['Conta_Chave'])
+    df_report = df_report[['Conta_Chave', 'Conta_Corrente', 'Conta_Contabil', 'Saldo_Final']].dropna(subset=['Conta_Chave'])
     df_report['Conta_Chave'] = df_report['Conta_Chave'].astype(int)
 
-    # --- Lógica dos extratos bancários REESCRITA com leitor manual ---
-    # 1. Ler o arquivo de forma manual para lidar com o formato inconsistente
+    # --- Processamento do Extrato Consolidado ---
     dados_extrato = []
-    # Decodifica o arquivo carregado para que a biblioteca csv possa lê-lo como texto
     stringio = io.StringIO(arquivo_extrato_consolidado.getvalue().decode('latin-1'))
-    # Pula a primeira linha (cabeçalho)
     next(stringio) 
-    # Usa o leitor de CSV para separar os campos corretamente
     reader = csv.reader(stringio, quotechar='"', delimiter=',')
     for row in reader:
-        if len(row) >= 6: # Garante que a linha tem colunas suficientes
-            dados_extrato.append(row[:6]) # Pega apenas as 6 primeiras colunas
+        if len(row) >= 6:
+            dados_extrato.append(row[:6])
 
-    # 2. Cria o DataFrame a partir dos dados lidos manualmente
     colunas_extrato = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado']
     df_extrato = pd.DataFrame(dados_extrato, columns=colunas_extrato)
     
-    # O restante da lógica de limpeza e cálculo permanece o mesmo
-    colunas_saldo_extrato = ['Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado']
+    colunas_saldo_extrato = ['Saldo_Corrente', 'Saldo_Aplicado']
     for col in colunas_saldo_extrato:
         df_extrato[col] = df_extrato[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
         df_extrato[col] = pd.to_numeric(df_extrato[col], errors='coerce').fillna(0)
-    
-    df_extrato['Saldo_Extrato'] = df_extrato['Saldo_Corrente'] + df_extrato['Saldo_Invest'] + df_extrato['Saldo_Aplicado']
 
     def extrair_conta_chave_extrato(texto_conta):
         try:
@@ -63,20 +59,34 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
             
     df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_conta_chave_extrato)
     
-    df_final_balances = df_extrato[['Conta_Chave', 'Saldo_Extrato']].dropna(subset=['Conta_Chave'])
+    df_final_balances = df_extrato[['Conta_Chave', 'Saldo_Corrente', 'Saldo_Aplicado']].dropna(subset=['Conta_Chave'])
     df_final_balances['Conta_Chave'] = df_final_balances['Conta_Chave'].astype(int)
-    df_final_balances = df_final_balances.groupby('Conta_Chave')['Saldo_Extrato'].sum().reset_index()
+    df_final_balances = df_final_balances.groupby('Conta_Chave')[['Saldo_Corrente', 'Saldo_Aplicado']].sum().reset_index()
 
-    # --- Lógica da conciliação (sem alterações) ---
+    # --- Lógica da Conciliação ---
     df_reconciliation = pd.merge(df_report, df_final_balances, on='Conta_Chave', how='left')
-    df_reconciliation['Saldo_Extrato'].fillna(0, inplace=True)
+    df_reconciliation['Saldo_Corrente'].fillna(0, inplace=True)
+    df_reconciliation['Saldo_Aplicado'].fillna(0, inplace=True)
+    
+    # MUDANÇA: Lógica condicional corrigida conforme sua instrução "É o contrário"
+    condicoes = [
+        df_reconciliation['Conta_Contabil'].str.contains('111115001', na=False), # Se for Aplicação...
+        df_reconciliation['Conta_Contabil'].str.contains('111111901', na=False)  # Se for Conta Movimento...
+    ]
+    escolhas = [
+        df_reconciliation['Saldo_Aplicado'],  # ...use o Saldo Aplicado do extrato.
+        df_reconciliation['Saldo_Corrente']   # ...use o Saldo Corrente do extrato.
+    ]
+    df_reconciliation['Saldo_Extrato'] = np.select(condicoes, escolhas, default=0)
+
     df_reconciliation['Diferenca'] = df_reconciliation['Saldo_Final'] - df_reconciliation['Saldo_Extrato']
     for col in ['Saldo_Final', 'Saldo_Extrato', 'Diferenca']:
         df_reconciliation[col] = df_reconciliation[col].round(2)
-    df_reconciliation = df_reconciliation[['Conta_Corrente', 'Saldo_Final', 'Saldo_Extrato', 'Diferenca']]
+    
+    df_reconciliation = df_reconciliation[['Conta_Contabil', 'Conta_Corrente', 'Saldo_Final', 'Saldo_Extrato', 'Diferenca']]
     return df_reconciliation
 
-# --- Bloco 2: Funções para Geração de Arquivos (sem alterações) ---
+# --- Bloco 2: Funções para Geração de Arquivos ---
 @st.cache_data
 def to_excel(df):
     output = io.BytesIO()
@@ -89,29 +99,31 @@ class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
         self.cell(0, 10, 'Relatório de Conciliação de Saldos Bancários', 0, 1, 'C')
-        self.ln(10)
+        self.ln(5)
     def footer(self):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
     def chapter_title(self, title):
-        self.set_font('Arial', 'B', 12)
+        self.set_font('Arial', 'B', 10)
         self.cell(0, 10, title, 0, 1, 'L')
         self.ln(5)
     def create_table(self, data):
-        self.set_font('Arial', 'B', 8)
-        col_widths = [65, 30, 30, 30]
+        self.set_font('Arial', 'B', 7)
+        col_widths = [55, 55, 25, 25, 25]
         headers = list(data.columns)
         formatted_data = data.copy()
         for col in ['Saldo_Final', 'Saldo_Extrato', 'Diferenca']:
             formatted_data[col] = formatted_data[col].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
         for i, header in enumerate(headers):
-            self.cell(col_widths[i], 10, header, 1)
+            self.cell(col_widths[i], 8, header, 1, 0, 'C')
         self.ln()
-        self.set_font('Arial', '', 8)
+        self.set_font('Arial', '', 6)
         for index, row in formatted_data.iterrows():
+            row['Conta_Contabil'] = (row['Conta_Contabil'][:30] + '...') if len(str(row['Conta_Contabil'])) > 30 else row['Conta_Contabil']
+            row['Conta_Corrente'] = (row['Conta_Corrente'][:32] + '...') if len(str(row['Conta_Corrente'])) > 32 else row['Conta_Corrente']
             for i, item in enumerate(row):
-                self.cell(col_widths[i], 10, str(item), 1)
+                self.cell(col_widths[i], 8, str(item), 1)
             self.ln()
 
 def create_pdf(df):
@@ -121,7 +133,7 @@ def create_pdf(df):
     pdf.create_table(df)
     return bytes(pdf.output())
 
-# --- Bloco 3: Interface Web com Streamlit (sem alterações) ---
+# --- Bloco 3: Interface Web com Streamlit ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide")
 st.title("Ferramenta de Conciliação de Saldos Bancários")
 
