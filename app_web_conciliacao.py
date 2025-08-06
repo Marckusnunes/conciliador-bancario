@@ -16,11 +16,10 @@ def realizar_conciliacao(arquivo_relatorio, lista_extratos):
     
     colunas_numericas_report = ["Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
     for col in colunas_numericas_report:
-        if col in df_report.columns: # Adicionada verificação se a coluna existe
+        if col in df_report.columns:
             df_report[col] = df_report[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
             df_report[col] = pd.to_numeric(df_report[col], errors='coerce')
     
-    # Lógica de extração de chave e processamento
     def extrair_conta_chave(texto_conta):
         match = re.search(r'\d{7,}', str(texto_conta))
         return int(match.group(0)) if match else None
@@ -82,7 +81,7 @@ class PDF(FPDF):
 
     def create_table(self, data):
         self.set_font('Arial', 'B', 8)
-        col_widths = [65, 30, 30, 30] 
+        col_widths = [65, 30, 30, 30]
         headers = list(data.columns)
         for i, header in enumerate(headers):
             self.cell(col_widths[i], 10, header, 1)
@@ -99,7 +98,7 @@ def create_pdf(df):
     pdf.add_page()
     pdf.chapter_title(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     pdf.create_table(df)
-    # LINHA CORRIGIDA: Removemos o .encode('latin-1') que causava o erro.
+    # LINHA CORRIGIDA DEFINITIVAMENTE: Retorna diretamente os bytes do PDF.
     return pdf.output()
 
 # --- Bloco 3: Interface Web com Streamlit ---
