@@ -5,9 +5,27 @@ import io
 
 # --- Bloco 1: A Lógica Principal da Conciliação ---
 def realizar_conciliacao(arquivo_relatorio, lista_extratos):
-    # Carregar e preparar o relatório
-    # LINHA CORRIGIDA: Adicionado encoding='latin-1' para ler corretamente os acentos.
-    df_report = pd.read_csv(arquivo_relatorio, sep=';', decimal=',', encoding='latin-1')
+    # --- NOVA ETAPA DE LIMPEZA AUTOMÁTICA DO RELATÓRIO ---
+    # Agora a aplicação limpa o relatório original automaticamente.
+    df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1')
+    
+    # Renomeia as colunas para um padrão fixo
+    df_report.columns = [
+        "Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil",
+        "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"
+    ]
+    
+    # Remove a primeira linha se for um cabeçalho duplicado (um problema comum)
+    if "Unidade Gestora" in df_report.iloc[0].to_string():
+         df_report = df_report.drop(df_report.index[0])
+            
+    # Converte as colunas numéricas do relatório
+    colunas_numericas_report = ["Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
+    for col in colunas_numericas_report:
+        df_report[col] = df_report[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        df_report[col] = pd.to_numeric(df_report[col], errors='coerce')
+    
+    # --- FIM DA NOVA ETAPA DE LIMPEZA ---
 
     def extrair_conta_chave(texto_conta):
         match = re.search(r'\d{7,}', str(texto_conta))
@@ -23,49 +41,41 @@ def realizar_conciliacao(arquivo_relatorio, lista_extratos):
         df = pd.read_csv(extrato_file, sep=';', encoding='latin-1', decimal=',')
         lista_df_extratos.append(df)
 
-    # Junta todos os extratos em uma única tabela
     df_statement = pd.concat(lista_df_extratos, ignore_index=True)
 
-    # Limpa as colunas de valor do extrato
     colunas_saldo_extrato = ['SALDO_ANTERIOR_TOTAL', 'SALDO_ATUAL_TOTAL', 'VALOR']
     for col in colunas_saldo_extrato:
         if col in df_statement.columns:
             df_statement[col] = df_statement[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
             df_statement[col] = pd.to_numeric(df_statement[col], errors='coerce')
 
-    # Trata as datas para encontrar a última movimentação
     df_statement['DT_LANCAMENTO'] = pd.to_datetime(df_statement['DT_LANCAMENTO'], format='%d/%m/%Y', errors='coerce')
     df_statement = df_statement.sort_values(by=['CONTA', 'DT_LANCAMENTO'])
     df_final_balances = df_statement.drop_duplicates(subset=['CONTA'], keep='last')
 
-    # Seleciona as colunas de interesse para a junção
     df_final_balances = df_final_balances[['CONTA', 'SALDO_ATUAL_TOTAL']]
     df_final_balances.rename(columns={'CONTA': 'Conta_Chave', 'SALDO_ATUAL_TOTAL': 'Saldo_Extrato'}, inplace=True)
 
-    # Realizar a conciliação (junção das tabelas)
     df_reconciliation = pd.merge(df_report, df_final_balances, on='Conta_Chave', how='left')
     df_reconciliation['Saldo_Extrato'].fillna(0, inplace=True)
     df_reconciliation['Diferenca'] = df_reconciliation['Saldo_Final'] - df_reconciliation['Saldo_Extrato']
 
-    # Arredonda os valores para 2 casas decimais
     for col in ['Saldo_Final', 'Saldo_Extrato', 'Diferenca']:
         df_reconciliation[col] = df_reconciliation[col].round(2)
 
-    # Seleciona e ordena as colunas finais do relatório
     df_reconciliation = df_reconciliation[['Conta_Corrente', 'Saldo_Final', 'Saldo_Extrato', 'Diferenca']]
 
     return df_reconciliation
 
 # --- Bloco 2: Construção da Interface Web com Streamlit ---
 st.set_page_config(page_title="Conciliador Bancário", layout="wide")
-
 st.title("Ferramenta de Conciliação Bancária")
 st.write("Uma aplicação para comparar o relatório contábil com os extratos bancários.")
 
 st.sidebar.header("1. Carregar Arquivos")
 
 arquivo_relatorio_carregado = st.sidebar.file_uploader(
-    "Selecione o Relatório Contábil (CSV)",
+    "Selecione o Relatório Contábil (CSV Original)",
     type=['csv']
 )
 
