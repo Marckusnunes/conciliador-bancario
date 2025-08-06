@@ -5,9 +5,9 @@ import io
 from fpdf import FPDF
 from datetime import datetime
 
-# --- Bloco 1: Lógica Principal da Conciliação (sem alterações) ---
-def realizar_conciliacao(arquivo_relatorio, lista_extratos):
-    # Etapa de limpeza automática do relatório
+# --- Bloco 1: Lógica Principal da Conciliação (com ajustes) ---
+def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
+    # Etapa de limpeza automática do relatório (sem alterações)
     df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1')
     if "Unidade Gestora" in df_report.columns[0]:
         df_report.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
@@ -20,32 +20,48 @@ def realizar_conciliacao(arquivo_relatorio, lista_extratos):
             df_report[col] = df_report[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
             df_report[col] = pd.to_numeric(df_report[col], errors='coerce')
     
-    def extrair_conta_chave(texto_conta):
+    def extrair_conta_chave_report(texto_conta):
         match = re.search(r'\d{7,}', str(texto_conta))
         return int(match.group(0)) if match else None
 
-    df_report['Conta_Chave'] = df_report['Conta_Corrente'].apply(extrair_conta_chave)
+    df_report['Conta_Chave'] = df_report['Conta_Corrente'].apply(extrair_conta_chave_report)
     df_report = df_report[['Conta_Chave', 'Conta_Corrente', 'Saldo_Final']].dropna(subset=['Conta_Chave'])
     df_report['Conta_Chave'] = df_report['Conta_Chave'].astype(int)
 
-    # Lógica dos extratos bancários
-    lista_df_extratos = []
-    for extrato_file in lista_extratos:
-        df = pd.read_csv(extrato_file, sep=';', encoding='latin-1', decimal=',')
-        lista_df_extratos.append(df)
-    df_statement = pd.concat(lista_df_extratos, ignore_index=True)
-    colunas_saldo_extrato = ['SALDO_ANTERIOR_TOTAL', 'SALDO_ATUAL_TOTAL', 'VALOR']
-    for col in colunas_saldo_extrato:
-        if col in df_statement.columns:
-            df_statement[col] = df_statement[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-            df_statement[col] = pd.to_numeric(df_statement[col], errors='coerce')
-    df_statement['DT_LANCAMENTO'] = pd.to_datetime(df_statement['DT_LANCAMENTO'], format='%d/%m/%Y', errors='coerce')
-    df_statement = df_statement.sort_values(by=['CONTA', 'DT_LANCAMENTO'])
-    df_final_balances = df_statement.drop_duplicates(subset=['CONTA'], keep='last')
-    df_final_balances = df_final_balances[['CONTA', 'SALDO_ATUAL_TOTAL']]
-    df_final_balances.rename(columns={'CONTA': 'Conta_Chave', 'SALDO_ATUAL_TOTAL': 'Saldo_Extrato'}, inplace=True)
+    # --- Lógica dos extratos bancários REESCRITA para o novo arquivo consolidado ---
+    # 1. Ler o novo arquivo consolidado, que usa vírgula como separador
+    df_extrato = pd.read_csv(arquivo_extrato_consolidado, sep=',', encoding='latin-1')
+    # Remove uma coluna extra vazia que pode aparecer
+    df_extrato = df_extrato.loc[:, ~df_extrato.columns.str.contains('^Unnamed')]
 
-    # Lógica da conciliação
+    # 2. Limpar os nomes das colunas
+    df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado']
+    
+    # 3. Limpar e converter as colunas de saldo para número
+    colunas_saldo_extrato = ['Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado']
+    for col in colunas_saldo_extrato:
+        df_extrato[col] = df_extrato[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        df_extrato[col] = pd.to_numeric(df_extrato[col], errors='coerce').fillna(0)
+    
+    # 4. Criar o Saldo Total do Extrato somando as colunas
+    df_extrato['Saldo_Extrato'] = df_extrato['Saldo_Corrente'] + df_extrato['Saldo_Invest'] + df_extrato['Saldo_Aplicado']
+
+    # 5. Criar a Conta_Chave a partir da coluna "Conta" (ex: "5.253-1" -> 52531)
+    def extrair_conta_chave_extrato(texto_conta):
+        try:
+            return int(re.sub(r'[\.\-]', '', str(texto_conta).split('-')[0]))
+        except (ValueError, IndexError):
+            return None
+            
+    df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_conta_chave_extrato)
+    
+    # 6. Preparar o DataFrame final do extrato para a junção
+    df_final_balances = df_extrato[['Conta_Chave', 'Saldo_Extrato']].dropna(subset=['Conta_Chave'])
+    df_final_balances['Conta_Chave'] = df_final_balances['Conta_Chave'].astype(int)
+    # Agrupar para o caso de a mesma conta aparecer mais de uma vez
+    df_final_balances = df_final_balances.groupby('Conta_Chave')['Saldo_Extrato'].sum().reset_index()
+
+    # --- Lógica da conciliação (sem alterações) ---
     df_reconciliation = pd.merge(df_report, df_final_balances, on='Conta_Chave', how='left')
     df_reconciliation['Saldo_Extrato'].fillna(0, inplace=True)
     df_reconciliation['Diferenca'] = df_reconciliation['Saldo_Final'] - df_reconciliation['Saldo_Extrato']
@@ -54,7 +70,7 @@ def realizar_conciliacao(arquivo_relatorio, lista_extratos):
     df_reconciliation = df_reconciliation[['Conta_Corrente', 'Saldo_Final', 'Saldo_Extrato', 'Diferenca']]
     return df_reconciliation
 
-# --- Bloco 2: Funções para Geração de Arquivos ---
+# --- Bloco 2: Funções para Geração de Arquivos (sem alterações) ---
 @st.cache_data
 def to_excel(df):
     output = io.BytesIO()
@@ -68,30 +84,24 @@ class PDF(FPDF):
         self.set_font('Arial', 'B', 12)
         self.cell(0, 10, 'Relatório de Conciliação de Saldos Bancários', 0, 1, 'C')
         self.ln(10)
-
     def footer(self):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
-
     def chapter_title(self, title):
         self.set_font('Arial', 'B', 12)
         self.cell(0, 10, title, 0, 1, 'L')
         self.ln(5)
-
     def create_table(self, data):
         self.set_font('Arial', 'B', 8)
         col_widths = [65, 30, 30, 30]
         headers = list(data.columns)
-        # Formata os números antes de passá-los para o PDF
         formatted_data = data.copy()
         for col in ['Saldo_Final', 'Saldo_Extrato', 'Diferenca']:
             formatted_data[col] = formatted_data[col].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
-        
         for i, header in enumerate(headers):
             self.cell(col_widths[i], 10, header, 1)
         self.ln()
-        
         self.set_font('Arial', '', 8)
         for index, row in formatted_data.iterrows():
             for i, item in enumerate(row):
@@ -105,41 +115,38 @@ def create_pdf(df):
     pdf.create_table(df)
     return bytes(pdf.output())
 
-# --- Bloco 3: Interface Web com Streamlit ---
+# --- Bloco 3: Interface Web com Streamlit (com pequena alteração) ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide")
-
 st.title("Ferramenta de Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
 arquivo_relatorio_carregado = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV Original)", type=['csv'])
-lista_extratos_carregados = st.sidebar.file_uploader("Selecione os Extratos Bancários (CSV)", type=['csv'], accept_multiple_files=True)
+
+# ALTERAÇÃO: Trocado o seletor de múltiplos arquivos por um seletor de arquivo único.
+arquivo_extrato_consolidado_carregado = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV)", type=['csv'])
 
 st.sidebar.header("2. Processar")
-if arquivo_relatorio_carregado and lista_extratos_carregados:
+if arquivo_relatorio_carregado and arquivo_extrato_consolidado_carregado:
     if st.sidebar.button("Conciliar Agora"):
         with st.spinner("Processando..."):
             try:
-                df_resultado = realizar_conciliacao(arquivo_relatorio_carregado, lista_extratos_carregados)
+                # Passa o novo arquivo único para a função de lógica
+                df_resultado = realizar_conciliacao(arquivo_relatorio_carregado, arquivo_extrato_consolidado_carregado)
                 st.success("Conciliação Concluída com Sucesso!")
                 st.session_state['df_resultado'] = df_resultado
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
 else:
-    st.sidebar.warning("Por favor, carregue o relatório e pelo menos um extrato.")
+    st.sidebar.warning("Por favor, carregue o relatório e o extrato consolidado.")
 
 if 'df_resultado' in st.session_state:
     df_final = st.session_state['df_resultado']
-    
     st.header("Resultado da Conciliação")
-    
     df_para_mostrar = df_final[df_final['Diferenca'] != 0].copy()
-    
     if df_para_mostrar.empty:
         st.success("Ótima notícia! Nenhuma divergência encontrada. Todos os saldos foram conciliados.")
     else:
         st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-        
-        # MUDANÇA FINAL: Formatação dos números para o padrão brasileiro (xxx.xxx,xx) e sem moeda.
         st.dataframe(df_para_mostrar.style.format(
             formatter={
                 'Saldo_Final': lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."),
@@ -150,27 +157,10 @@ if 'df_resultado' in st.session_state:
 
     st.header("Download do Relatório Completo")
     st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
-    
     col1, col2, col3 = st.columns(3)
-
     with col1:
-        st.download_button(
-           label="Baixar em CSV",
-           data=df_final.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig'),
-           file_name='relatorio_conciliacao.csv',
-           mime='text/csv',
-        )
+        st.download_button("Baixar em CSV", df_final.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_conciliacao.csv', 'text/csv')
     with col2:
-        st.download_button(
-           label="Baixar em Excel",
-           data=to_excel(df_final),
-           file_name='relatorio_conciliacao.xlsx',
-           mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        )
+        st.download_button("Baixar em Excel", to_excel(df_final), 'relatorio_conciliacao.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     with col3:
-        st.download_button(
-           label="Baixar em PDF",
-           data=create_pdf(df_final),
-           file_name='relatorio_conciliacao.pdf',
-           mime='application/pdf',
-        )
+        st.download_button("Baixar em PDF", create_pdf(df_final), 'relatorio_conciliacao.pdf', 'application/pdf')
