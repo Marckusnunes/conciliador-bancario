@@ -98,7 +98,7 @@ def create_pdf(df):
     pdf.add_page()
     pdf.chapter_title(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     pdf.create_table(df)
-    # LINHA CORRIGIDA DEFINITIVAMENTE: Retorna diretamente os bytes do PDF.
+    # Versão correta que deve retornar um objeto bytes.
     return pdf.output()
 
 # --- Bloco 3: Interface Web com Streamlit ---
@@ -129,6 +129,17 @@ if 'df_resultado' in st.session_state:
     st.header("Download do Relatório")
     df_final = st.session_state['df_resultado']
     
+    # --- LINHAS DE DEPURAÇÃO ---
+    st.subheader("Informações de Depuração (Pode ignorar)")
+    try:
+        pdf_data_for_debug = create_pdf(df_final)
+        st.write(f"O tipo de dado gerado pela função create_pdf é: **{type(pdf_data_for_debug)}**")
+        st.write(f"O tamanho dos dados gerados é: **{len(pdf_data_for_debug)} bytes**")
+    except Exception as e:
+        st.write(f"Erro ao tentar gerar os dados do PDF para depuração: {e}")
+    # --- FIM DAS LINHAS DE DEPURAÇÃO ---
+
+    st.header(" ") # Espaçamento
     col1, col2, col3 = st.columns(3)
 
     with col1:
