@@ -7,8 +7,9 @@ import numpy as np
 from fpdf import FPDF
 from datetime import datetime
 
-# --- Bloco 1: Lógica Principal da Conciliação (sem alterações) ---
+# --- Bloco 1: Lógica Principal da Conciliação ---
 def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
+    # --- Processamento do Relatório Contábil ---
     df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1')
     if "Unidade Gestora" in df_report.columns[0]:
         df_report.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
@@ -39,6 +40,10 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
 
     df_report_pivot = pd.merge(df_movimento_contabil, df_aplicacao_contabil, on='Conta_Chave', how='outer')
 
+    # Guardar a descrição do Domicílio Bancário para usar como identificador final
+    mapa_domicilio = df_report[['Conta_Chave', 'Domicilio_Bancario']].drop_duplicates().set_index('Conta_Chave')
+
+    # --- Processamento do Extrato Consolidado ---
     dados_extrato = []
     stringio = io.StringIO(arquivo_extrato_consolidado.getvalue().decode('latin-1'))
     next(stringio)
@@ -64,43 +69,50 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
             return None
     df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_conta_chave_extrato)
     
-    df_extrato_pivot = df_extrato[['Conta_Chave', 'Conta', 'Saldo_Extrato_Movimento', 'Saldo_Extrato_Aplicacao']].dropna(subset=['Conta_Chave'])
+    df_extrato_pivot = df_extrato[['Conta_Chave', 'Saldo_Extrato_Movimento', 'Saldo_Extrato_Aplicacao']].dropna(subset=['Conta_Chave'])
     df_extrato_pivot['Conta_Chave'] = df_extrato_pivot['Conta_Chave'].astype(int)
-    df_extrato_pivot = df_extrato_pivot.groupby('Conta_Chave').agg({
-        'Conta': 'first',
-        'Saldo_Extrato_Movimento': 'sum',
-        'Saldo_Extrato_Aplicacao': 'sum'
-    }).reset_index()
-    df_extrato_pivot.rename(columns={'Conta': 'Conta_Bancaria'}, inplace=True)
+    df_extrato_pivot = df_extrato_pivot.groupby('Conta_Chave').sum().reset_index()
 
+    # --- Consolidação e Reestruturação Final ---
     df_final = pd.merge(df_report_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
     df_final.fillna(0, inplace=True)
+    
+    # Mapear de volta o Domicílio Bancário
+    df_final = df_final.join(mapa_domicilio, on='Conta_Chave')
+    df_final['Domicilio_Bancario'].fillna('Não encontrado no relatório', inplace=True)
+    df_final = df_final[df_final['Conta_Chave'] != 0] # Remove linhas sem chave válida
 
     df_final['Diferenca_Movimento'] = df_final['Saldo_Contabil_Movimento'] - df_final['Saldo_Extrato_Movimento']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Contabil_Aplicacao'] - df_final['Saldo_Extrato_Aplicacao']
     
-    colunas_para_arredondar = ['Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento', 'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao']
+    colunas_para_arredondar = df_final.select_dtypes(include=np.number).columns.drop('Conta_Chave', errors='ignore')
     for col in colunas_para_arredondar:
-        if col in df_final.columns:
-            df_final[col] = df_final[col].round(2)
-        
-    colunas_finais = ['Conta_Bancaria', 'Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento', 'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao']
+        df_final[col] = df_final[col].round(2)
     
-    # Garante que todas as colunas finais existam, preenchendo com 0 se alguma não for criada
-    for col in colunas_finais:
-        if col not in df_final.columns:
-            df_final[col] = 0
-            
-    df_final = df_final[colunas_finais]
+    df_final = df_final.set_index('Domicilio_Bancario')
+    df_final = df_final[[
+        'Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento',
+        'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao'
+    ]]
+    
+    df_final.columns = pd.MultiIndex.from_tuples([
+        ('Conta Movimento', 'Saldo Contábil'),
+        ('Conta Movimento', 'Saldo Extrato'),
+        ('Conta Movimento', 'Diferença'),
+        ('Aplicação Financeira', 'Saldo Contábil'),
+        ('Aplicação Financeira', 'Saldo Extrato'),
+        ('Aplicação Financeira', 'Diferença')
+    ], names=['Grupo', 'Item']) # Nomes dos níveis do cabeçalho
     
     return df_final
 
-# --- Bloco 2: Funções para Geração de Arquivos (sem alterações) ---
+# --- Bloco 2: Funções para Geração de Arquivos ---
 @st.cache_data
 def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Conciliacao_Consolidada')
+        # Escreve o DataFrame com o MultiIndex no Excel
+        df.to_excel(writer, index=True, sheet_name='Conciliacao_Consolidada')
     return output.getvalue()
 
 class PDF(FPDF):
@@ -113,22 +125,36 @@ class PDF(FPDF):
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
     def create_table(self, data):
-        self.set_font('Arial', 'B', 6)
-        col_widths = [28, 28, 28, 28, 28, 28, 28] 
-        headers = [h.replace('_', ' ') for h in data.columns]
-        for i, header in enumerate(headers):
-            self.multi_cell(col_widths[i], 4, header, border=1, align='C', ln=3)
-        self.ln()
+        self.set_font('Arial', '', 7)
+        line_height = self.font_size * 2.5
+        col_width = 30 
         
+        self.set_font('Arial', 'B', 8)
+        self.cell(55, line_height, 'Domicílio Bancário', 1, 0, 'C')
+        self.cell(col_width * 3, line_height, 'Conta Movimento', 1, 0, 'C')
+        self.cell(col_width * 3, line_height, 'Aplicação Financeira', 1, 0, 'C')
+        self.ln(line_height)
+        
+        self.set_font('Arial', 'B', 7)
+        self.cell(55, line_height, '', 1, 0, 'C')
+        sub_headers = ['Saldo Contábil', 'Saldo Extrato', 'Diferença']
+        for _ in range(2):
+            for sub_header in sub_headers:
+                self.cell(col_width, line_height, sub_header, 1, 0, 'C')
+        self.ln(line_height)
+
         self.set_font('Arial', '', 6)
         formatted_data = data.copy()
-        for col in data.select_dtypes(include=np.number).columns:
-            formatted_data[col] = formatted_data[col].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
-        
+        for col_tuple in formatted_data.columns:
+             formatted_data[col_tuple] = formatted_data[col_tuple].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
+
         for index, row in formatted_data.iterrows():
-            for i, item in enumerate(row):
-                self.cell(col_widths[i], 8, str(item), 1)
-            self.ln()
+            # Truncar o Domicílio Bancário para caber
+            display_index = (index[:35] + '...') if len(str(index)) > 35 else index
+            self.cell(55, line_height, str(display_index), 1, 0, 'L')
+            for item in row:
+                self.cell(col_width, line_height, str(item), 1, 0, 'R')
+            self.ln(line_height)
 
 def create_pdf(df):
     pdf = PDF('L', 'mm', 'A4')
@@ -161,24 +187,24 @@ if 'df_resultado' in st.session_state:
     df_final = st.session_state['df_resultado']
     st.header("Resultado da Conciliação Consolidada")
     
-    # AJUSTE DE SEGURANÇA: Verifica se a tabela não está vazia ANTES de tentar filtrar
-    if not df_final.empty:
-        df_para_mostrar = df_final[(df_final['Diferenca_Movimento'].abs() > 0.01) | (df_final['Diferenca_Aplicacao'].abs() > 0.01)].copy()
-        
-        if df_para_mostrar.empty:
-            st.success("Ótima notícia! Nenhuma divergência encontrada.")
-        else:
-            st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-            formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.select_dtypes(include=np.number).columns}
-            st.dataframe(df_para_mostrar.style.format(formatter=formatters).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=['Diferenca_Movimento', 'Diferenca_Aplicacao']))
+    df_para_mostrar = df_final[
+        (df_final[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
+        (df_final[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
+    ].copy()
+    
+    if df_para_mostrar.empty:
+        st.success("Ótima notícia! Nenhuma divergência encontrada.")
     else:
-        st.warning("O processamento não resultou em dados para exibir. Verifique se os arquivos de entrada contêm contas correspondentes.")
+        st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
+        
+        formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
+        st.dataframe(df_para_mostrar.style.format(formatter=formatters).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')]))
 
     st.header("Download do Relatório Completo")
     st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.download_button("Baixar em CSV", df_final.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
+        st.download_button("Baixar em CSV", df_final.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
     with col2:
         st.download_button("Baixar em Excel", to_excel(df_final), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     with col3:
