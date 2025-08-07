@@ -4,14 +4,18 @@ import re
 import io
 import csv
 import numpy as np
+from fpdf import FPDF
+from datetime import datetime
 
-# --- Bloco 1: Lógica Principal (Modificada para Diagnóstico) ---
-def realizar_diagnostico(arquivo_relatorio, arquivo_extrato_consolidado):
-    # --- Processamento do Relatório Contábil ---
+# --- Bloco 1: Lógica Principal da Conciliação ---
+def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
+    # --- Processamento do Relatório Contábil (contabilidade) ---
     dados_relatorio = []
     stringio_report = io.StringIO(arquivo_relatorio.getvalue().decode('latin-1'))
     reader_report = csv.reader(stringio_report, delimiter=';')
+    
     header_report = next(reader_report, None)
+    
     for row in reader_report:
         if len(row) >= 8:
             dados_relatorio.append(row[:8])
@@ -19,19 +23,32 @@ def realizar_diagnostico(arquivo_relatorio, arquivo_extrato_consolidado):
     colunas_report = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
     df_report = pd.DataFrame(dados_relatorio, columns=colunas_report)
 
+    colunas_numericas_report = ["Saldo_Final"]
+    for col in colunas_numericas_report:
+        if col in df_report.columns:
+            df_report[col] = df_report[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+            df_report[col] = pd.to_numeric(df_report[col], errors='coerce')
+    
     def extrair_conta_chave_report(texto_conta):
         match = re.search(r'\d{7,}', str(texto_conta))
         return int(match.group(0)) if match else None
 
-    # Aplica a extração na coluna "Domicilio_Bancario"
     df_report['Conta_Chave'] = df_report['Domicilio_Bancario'].apply(extrair_conta_chave_report)
     df_report.dropna(subset=['Conta_Chave'], inplace=True)
     df_report['Conta_Chave'] = df_report['Conta_Chave'].astype(int)
-    
-    # Prepara o arquivo de debug do relatório
-    debug_report = df_report[['Domicilio_Bancario', 'Conta_Chave']].drop_duplicates()
 
-    # --- Processamento do Extrato Consolidado ---
+    df_movimento_contabil = df_report[df_report['Conta_Contabil'].str.contains('111111901', na=False)]
+    df_movimento_contabil = df_movimento_contabil.groupby('Conta_Chave')['Saldo_Final'].sum().reset_index()
+    df_movimento_contabil.rename(columns={'Saldo_Final': 'Saldo_Contabil_Movimento'}, inplace=True)
+
+    df_aplicacao_contabil = df_report[df_report['Conta_Contabil'].str.contains('111115001', na=False)]
+    df_aplicacao_contabil = df_aplicacao_contabil.groupby('Conta_Chave')['Saldo_Final'].sum().reset_index()
+    df_aplicacao_contabil.rename(columns={'Saldo_Final': 'Saldo_Contabil_Aplicacao'}, inplace=True)
+
+    df_report_pivot = pd.merge(df_movimento_contabil, df_aplicacao_contabil, on='Conta_Chave', how='outer')
+    mapa_domicilio = df_report[['Conta_Chave', 'Domicilio_Bancario']].drop_duplicates().set_index('Conta_Chave')
+
+    # --- Processamento do Extrato Consolidado (extrato) ---
     dados_extrato = []
     stringio_extrato = io.StringIO(arquivo_extrato_consolidado.getvalue().decode('latin-1'))
     next(stringio_extrato)
@@ -42,6 +59,12 @@ def realizar_diagnostico(arquivo_relatorio, arquivo_extrato_consolidado):
 
     colunas_extrato = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado']
     df_extrato = pd.DataFrame(dados_extrato, columns=colunas_extrato)
+    
+    colunas_saldo_extrato = ['Saldo_Corrente', 'Saldo_Aplicado']
+    for col in colunas_saldo_extrato:
+        df_extrato[col] = df_extrato[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        df_extrato[col] = pd.to_numeric(df_extrato[col], errors='coerce').fillna(0)
+    df_extrato.rename(columns={'Saldo_Corrente': 'Saldo_Extrato_Movimento', 'Saldo_Aplicado': 'Saldo_Extrato_Aplicacao'}, inplace=True)
 
     def extrair_conta_chave_extrato(texto_conta):
         try:
@@ -52,64 +75,26 @@ def realizar_diagnostico(arquivo_relatorio, arquivo_extrato_consolidado):
             
     df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_conta_chave_extrato)
     
-    # Prepara o arquivo de debug do extrato
-    debug_extrato = df_extrato[['Conta', 'Titular', 'Conta_Chave']].drop_duplicates().dropna(subset=['Conta_Chave'])
-    debug_extrato['Conta_Chave'] = debug_extrato['Conta_Chave'].astype(int)
+    df_extrato_pivot = df_extrato[['Conta_Chave', 'Saldo_Extrato_Movimento', 'Saldo_Extrato_Aplicacao']].dropna(subset=['Conta_Chave'])
+    df_extrato_pivot['Conta_Chave'] = df_extrato_pivot['Conta_Chave'].astype(int)
+    df_extrato_pivot = df_extrato_pivot.groupby('Conta_Chave').sum().reset_index()
+
+    # --- Consolidação e Reestruturação Final ---
+    df_final = pd.merge(df_report_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
+    df_final.fillna(0, inplace=True)
+    df_final = df_final.join(mapa_domicilio, on='Conta_Chave')
+    df_final.dropna(subset=['Domicilio_Bancario'], inplace=True)
+    df_final = df_final[df_final['Conta_Chave'] != 0]
+
+    df_final['Diferenca_Movimento'] = df_final['Saldo_Contabil_Movimento'] - df_final['Saldo_Extrato_Movimento']
+    df_final['Diferenca_Aplicacao'] = df_final['Saldo_Contabil_Aplicacao'] - df_final['Saldo_Extrato_Aplicacao']
     
-    return debug_report, debug_extrato
-
-# --- Bloco 2: Interface Web (Modificada para Diagnóstico) ---
-st.set_page_config(page_title="Diagnóstico de Conciliação", layout="wide")
-st.title("Ferramenta de Diagnóstico de Chaves")
-st.warning("Esta é uma versão de diagnóstico para verificar a correspondência de contas entre os arquivos.")
-
-st.sidebar.header("1. Carregar Arquivos")
-arquivo_relatorio_carregado = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV Original)", type=['csv'])
-arquivo_extrato_consolidado_carregado = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV)", type=['csv'])
-
-st.sidebar.header("2. Processar")
-if arquivo_relatorio_carregado and arquivo_extrato_consolidado_carregado:
-    if st.sidebar.button("Diagnosticar Chaves Agora"):
-        with st.spinner("Extraindo chaves de ambos os arquivos..."):
-            try:
-                debug_df_report, debug_df_extrato = realizar_diagnostico(arquivo_relatorio_carregado, arquivo_extrato_consolidado_carregado)
-                st.success("Diagnóstico concluído!")
-                st.session_state['debug_report'] = debug_df_report
-                st.session_state['debug_extrato'] = debug_df_extrato
-            except Exception as e:
-                st.error(f"Ocorreu um erro durante o processamento: {e}")
-else:
-    st.sidebar.warning("Por favor, carregue ambos os arquivos para diagnóstico.")
-
-if 'debug_report' in st.session_state and 'debug_extrato' in st.session_state:
-    debug_report = st.session_state['debug_report']
-    debug_extrato = st.session_state['debug_extrato']
+    df_final = df_final.set_index('Domicilio_Bancario')
+    df_final = df_final[[
+        'Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento',
+        'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao'
+    ]]
     
-    st.header("Chaves Extraídas do Relatório Contábil")
-    st.write(f"Total de chaves únicas encontradas: {len(debug_report)}")
-    st.dataframe(debug_report)
-    st.download_button(
-        "Baixar Chaves do Relatório", 
-        debug_report.to_csv(index=False, sep=';').encode('utf-8-sig'), 
-        'debug_chaves_relatorio.csv', 
-        'text/csv'
-    )
-
-    st.header("Chaves Extraídas do Extrato Consolidado")
-    st.write(f"Total de chaves únicas encontradas: {len(debug_extrato)}")
-    st.dataframe(debug_extrato)
-    st.download_button(
-        "Baixar Chaves do Extrato", 
-        debug_extrato.to_csv(index=False, sep=';').encode('utf-8-sig'), 
-        'debug_chaves_extrato.csv', 
-        'text/csv'
-    )
-    
-    st.header("Análise de Correspondência")
-    chaves_comuns = pd.merge(debug_report, debug_extrato, on='Conta_Chave', how='inner')
-    if chaves_comuns.empty:
-        st.error("ANÁLISE: Nenhuma chave em comum foi encontrada entre os dois arquivos. A conciliação não pode prosseguir pois não há dados para cruzar.")
-    else:
-        st.success(f"ANÁLISE: Foram encontradas {len(chaves_comuns)} contas correspondentes entre os dois arquivos.")
-        st.write("Contas correspondentes:")
-        st.dataframe(chaves_comuns)
+    df_final.columns = pd.MultiIndex.from_tuples([
+        ('Conta Movimento', 'Saldo Contábil'), ('Conta Movimento', 'Saldo Extrato'), ('Conta Movimento', 'Diferença'),
+        ('Aplicação Financeira', 'Saldo Contábil'), ('Aplicação Financeira', 'Saldo Extrato'), ('Aplicação Financeira', 'Difer
