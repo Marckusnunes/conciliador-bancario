@@ -6,27 +6,21 @@ import numpy as np
 from fpdf import FPDF
 from datetime import datetime
 
-# --- Bloco 1: Lógica Principal da Conciliação (Reescrita) ---
+# --- Bloco 1: Lógica Principal da Conciliação ---
 def realizar_conciliacao(contabilidade_file, extrato_file):
     # --- Processamento dos Arquivos Excel ---
     df_contabil = pd.read_excel(contabilidade_file, engine='openpyxl')
     df_extrato = pd.read_excel(extrato_file, engine='openpyxl', sheet_name='Table 1')
 
-    # Renomeia colunas para um padrão consistente e seleciona as necessárias
     df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
     df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
-    
-    df_contabil = df_contabil[['Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
-    df_extrato = df_extrato[['Conta', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']]
 
-    # Converte colunas de saldo para numérico, tratando erros e valores nulos
     for df in [df_contabil, df_extrato]:
         for col in df.columns:
             if 'Saldo' in col:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
     # --- Lógica de Junção e Reestruturação ---
-    # Cria uma chave de ligação limpa (só números) para ambos os dataframes
     def extrair_chave(texto_conta):
         try:
             return int(re.sub(r'\D', '', str(texto_conta)))
@@ -36,33 +30,35 @@ def realizar_conciliacao(contabilidade_file, extrato_file):
     df_contabil['Conta_Chave'] = df_contabil['Conta'].apply(extrair_chave)
     df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_chave)
     
-    # Remove linhas onde a chave não pôde ser criada
-    df_contabil.dropna(subset=['Conta_Chave'], inplace=True)
-    df_extrato.dropna(subset=['Conta_Chave'], inplace=True)
-    df_contabil['Conta_Chave'] = df_contabil['Conta_Chave'].astype(int)
-    df_extrato['Conta_Chave'] = df_extrato['Conta_Chave'].astype(int)
+    for df in [df_contabil, df_extrato]:
+        df.dropna(subset=['Conta_Chave', 'Conta'], inplace=True)
+        df['Conta_Chave'] = df['Conta_Chave'].astype(int)
 
-    # Agrupa os dados para garantir uma linha por conta, caso haja duplicatas
     df_contabil_pivot = df_contabil.groupby('Conta_Chave').agg({
         'Conta': 'first',
-        'Titular': 'first',
         'Saldo_Corrente_Contabil': 'sum',
         'Saldo_Aplicado_Contabil': 'sum'
     }).reset_index()
 
-    df_extrato_pivot = df_extrato.groupby('Conta_Chave')[['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']].sum().reset_index()
+    df_extrato_pivot = df_extrato.groupby('Conta_Chave').agg({
+        'Conta': 'first',
+        'Saldo_Corrente_Extrato': 'sum',
+        'Saldo_Aplicado_Extrato': 'sum'
+    }).reset_index()
 
-    # Consolidação e Reestruturação Final
-    df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
+    # MUDANÇA: Alterado de 'outer' para 'inner' para mostrar apenas contas que existem em AMBOS os arquivos.
+    df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Conta_Chave', how='inner')
     df_final.fillna(0, inplace=True)
-    # Usa a coluna 'Conta' do arquivo contábil como identificador principal
-    df_final.rename(columns={'Conta': 'Domicilio_Bancario'}, inplace=True)
-    df_final['Domicilio_Bancario'].fillna('Conta sem descrição no arquivo contábil', inplace=True)
+    
+    # Renomeia a coluna 'Conta' para um nome mais apropriado para o índice.
+    # Usamos _x para pegar a coluna 'Conta' que veio do df_contabil_pivot.
+    df_final.rename(columns={'Conta_x': 'Conta Bancária'}, inplace=True)
+    df_final['Conta Bancária'].fillna('Conta sem descrição', inplace=True)
 
     df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
     
-    df_final = df_final.set_index('Domicilio_Bancario')
+    df_final = df_final.set_index('Conta Bancária')
     df_final = df_final[[
         'Saldo_Corrente_Contabil', 'Saldo_Corrente_Extrato', 'Diferenca_Movimento',
         'Saldo_Aplicado_Contabil', 'Saldo_Aplicado_Extrato', 'Diferenca_Aplicacao'
@@ -99,13 +95,13 @@ class PDF(FPDF):
         
         self.set_font('Arial', 'B', 8)
         index_name = data.index.name if data.index.name else 'ID'
-        self.cell(55, line_height, index_name, 1, 0, 'C')
+        self.cell(40, line_height, index_name, 1, 0, 'C')
         self.cell(col_width * 3, line_height, 'Conta Movimento', 1, 0, 'C')
         self.cell(col_width * 3, line_height, 'Aplicação Financeira', 1, 0, 'C')
         self.ln(line_height)
         
         self.set_font('Arial', 'B', 7)
-        self.cell(55, line_height, '', 1, 0, 'C')
+        self.cell(40, line_height, '', 1, 0, 'C')
         sub_headers = ['Saldo Contábil', 'Saldo Extrato', 'Diferença']
         for _ in range(2):
             for sub_header in sub_headers:
@@ -118,8 +114,8 @@ class PDF(FPDF):
              formatted_data[col_tuple] = formatted_data[col_tuple].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
 
         for index, row in formatted_data.iterrows():
-            display_index = (index[:35] + '...') if len(str(index)) > 35 else index
-            self.cell(55, line_height, str(display_index), 1, 0, 'L')
+            display_index = str(index)
+            self.cell(40, line_height, display_index, 1, 0, 'L')
             for item in row:
                 self.cell(col_width, line_height, str(item), 1, 0, 'R')
             self.ln(line_height)
@@ -169,7 +165,7 @@ if 'df_resultado' in st.session_state:
             st.dataframe(df_para_mostrar.style.format(formatter=formatters))
 
         st.header("Download do Relatório Completo")
-        st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
+        st.write("Os arquivos para download contêm todas as contas que foram encontradas em ambos os arquivos.")
         col1, col2, col3 = st.columns(3)
         with col1:
             df_csv = df_final_formatado.copy()
@@ -179,3 +175,5 @@ if 'df_resultado' in st.session_state:
             st.download_button("Baixar em Excel", to_excel(df_final_formatado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         with col3:
             st.download_button("Baixar em PDF", create_pdf(df_final_formatado), 'relatorio_consolidado.pdf', 'application/pdf')
+    elif df_final_formatado is not None:
+         st.info("Processamento concluído. Nenhuma conta correspondente foi encontrada entre os dois arquivos.")
