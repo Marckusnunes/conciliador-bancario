@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import io
+import csv
 import numpy as np
 from fpdf import FPDF
 from datetime import datetime
@@ -9,25 +10,30 @@ from datetime import datetime
 # --- Bloco 1: Lógica Principal da Conciliação ---
 def realizar_conciliacao(contabilidade_file, extrato_file):
     # --- Processamento do Relatório Contábil (contabilidade) ---
-    # Leitor inteligente que se adapta ao número de colunas do arquivo.
-    df_report = pd.read_csv(contabilidade_file, sep=',', encoding='latin-1', header=0)
+    # Leitor simples, pois o novo arquivo "Saldos_Bancarios-XLS-2.csv" está bem formatado.
+    df_contabil = pd.read_csv(contabilidade_file, sep=',', encoding='latin-1')
+    df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
     
-    # Renomeia as colunas para um padrão consistente
-    df_report.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
-
-    # Converte colunas de saldo para numérico, tratando erros
     for col in ['Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']:
-        df_report[col] = pd.to_numeric(df_report[col], errors='coerce').fillna(0)
-    
+        df_contabil[col] = pd.to_numeric(df_contabil[col], errors='coerce').fillna(0)
+
     # --- Processamento do Extrato Consolidado (extrato) ---
-    # Leitor robusto que ignora o cabeçalho e força os nomes das colunas.
-    colunas_extrato = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Vazio']
-    df_extrato = pd.read_csv(
-        extrato_file, sep=',', encoding='latin-1', quotechar='"', skiprows=1, header=None, names=colunas_extrato, on_bad_lines='skip'
-    )
+    # Leitor manual e robusto para o arquivo "Saldo_dos_grupos.csv"
+    dados_extrato = []
+    stringio_extrato = io.StringIO(extrato_file.getvalue().decode('latin-1'))
+    next(stringio_extrato) # Pula o cabeçalho
+    for line in stringio_extrato:
+        # Remove aspas e quebras de linha, depois divide por vírgula
+        cleaned_line = line.replace('"', '').strip()
+        parts = cleaned_line.split(',')
+        if len(parts) >= 6:
+            dados_extrato.append(parts[:6])
+
+    colunas_extrato = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Invest_Extrato', 'Saldo_Aplicado_Extrato']
+    df_extrato = pd.DataFrame(dados_extrato, columns=colunas_extrato)
     
-    # Converte colunas de saldo para numérico, tratando erros e formato americano
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
+        # Limpa os valores para conversão (formato americano)
         df_extrato[col] = pd.to_numeric(
             df_extrato[col].astype(str).str.replace(',', '', regex=False),
             errors='coerce'
@@ -35,17 +41,17 @@ def realizar_conciliacao(contabilidade_file, extrato_file):
 
     # --- Lógica de Junção e Reestruturação ---
     # Cria uma chave de ligação limpa para ambos os dataframes
-    for df in [df_report, df_extrato]:
+    for df in [df_contabil, df_extrato]:
         df['Conta_Chave'] = df['Conta'].astype(str).apply(lambda x: re.sub(r'\D', '', x))
         df.dropna(subset=['Conta_Chave'], inplace=True)
         df = df[df['Conta_Chave'] != '']
         df['Conta_Chave'] = df['Conta_Chave'].astype(int)
 
     # Prepara os dataframes para a junção
-    df_report_pivot = df_report[['Conta_Chave', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
+    df_contabil_pivot = df_contabil[['Conta_Chave', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
     df_extrato_pivot = df_extrato[['Conta_Chave', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']]
     
-    df_report_pivot = df_report_pivot.groupby('Conta_Chave').agg({
+    df_contabil_pivot = df_contabil_pivot.groupby('Conta_Chave').agg({
         'Titular': 'first',
         'Saldo_Corrente_Contabil': 'sum',
         'Saldo_Aplicado_Contabil': 'sum'
@@ -54,7 +60,7 @@ def realizar_conciliacao(contabilidade_file, extrato_file):
     df_extrato_pivot = df_extrato_pivot.groupby('Conta_Chave').sum().reset_index()
 
     # Consolidação e Reestruturação Final
-    df_final = pd.merge(df_report_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
+    df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
     df_final.fillna(0, inplace=True)
     df_final.rename(columns={'Titular': 'Domicilio_Bancario'}, inplace=True)
 
