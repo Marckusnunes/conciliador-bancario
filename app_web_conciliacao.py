@@ -16,12 +16,11 @@ def ler_csv_universal(arquivo_carregado):
     if arquivo_carregado is None:
         return pd.DataFrame()
     
-    # Reseta o ponteiro do arquivo para o início para garantir a leitura
     arquivo_carregado.seek(0)
     
     try:
-        # Tentativa 1: Ler como CSV delimitado por vírgula (formato do arquivo Saldos_Bancarios-XLS-2.csv)
-        df = pd.read_csv(arquivo_carregado, sep=',', encoding='latin-1')
+        # Tentativa 1: Ler como CSV delimitado por vírgula
+        df = pd.read_csv(arquivo_carregado, sep=',', encoding='latin-1', on_bad_lines='skip')
         if len(df.columns) > 1:
             return df
     except Exception:
@@ -31,7 +30,7 @@ def ler_csv_universal(arquivo_carregado):
 
     try:
         # Tentativa 2: Ler como CSV delimitado por ponto e vírgula
-        df = pd.read_csv(arquivo_carregado, sep=';', encoding='latin-1')
+        df = pd.read_csv(arquivo_carregado, sep=';', encoding='latin-1', on_bad_lines='skip')
         if len(df.columns) > 1:
             return df
     except Exception:
@@ -39,7 +38,7 @@ def ler_csv_universal(arquivo_carregado):
 
     arquivo_carregado.seek(0)
     
-    # Tentativa 3: Leitor manual para formatos inconsistentes (como o Saldo_dos_grupos.csv)
+    # Tentativa 3: Leitor manual para formatos inconsistentes
     try:
         dados = []
         stringio = io.StringIO(arquivo_carregado.getvalue().decode('latin-1'))
@@ -48,7 +47,7 @@ def ler_csv_universal(arquivo_carregado):
         
         reader = csv.reader(stringio, quotechar='"', delimiter=',')
         for row in reader:
-            if len(row) >= len(colunas):
+            if row and len(row) >= len(colunas):
                 dados.append(row[:len(colunas)])
         
         if dados:
@@ -56,17 +55,16 @@ def ler_csv_universal(arquivo_carregado):
             return df
     except Exception:
         st.error(f"Não foi possível ler o arquivo '{arquivo_carregado.name}' com nenhum dos métodos conhecidos.")
-        return pd.DataFrame() 
+        return pd.DataFrame()
 
 def realizar_conciliacao(contabilidade_file, extrato_file):
     df_contabil = ler_csv_universal(contabilidade_file)
     df_extrato = ler_csv_universal(extrato_file)
 
     if df_contabil.empty or df_extrato.empty:
-        st.warning("Um dos arquivos não pôde ser lido ou está vazio. Verifique os arquivos carregados.")
+        st.warning("Um ou ambos os arquivos não puderam ser lidos ou estão vazios. Verifique os arquivos carregados.")
         return pd.DataFrame()
 
-    # Renomeia as colunas para um padrão consistente
     df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
     df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
 
@@ -74,10 +72,7 @@ def realizar_conciliacao(contabilidade_file, extrato_file):
         df_contabil[col] = pd.to_numeric(df_contabil[col].astype(str).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
 
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
-        df_extrato[col] = pd.to_numeric(
-            df_extrato[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
-            errors='coerce'
-        ).fillna(0)
+        df_extrato[col] = pd.to_numeric(df_extrato[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
 
     def extrair_chave(texto_conta):
         try: return int(re.sub(r'\D', '', str(texto_conta)))
@@ -168,7 +163,8 @@ def create_pdf(df):
 
 # --- Bloco 3: Interface Web com Streamlit ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide")
-st.title("Ferramenta de Conciliação de Saldos Bancários")
+# TÍTULO ALTERADO PARA VERIFICAÇÃO DE ATUALIZAÇÃO
+st.title("VERSÃO FINAL CORRIGIDA - Conciliador")
 
 st.sidebar.header("1. Carregar Arquivos")
 contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV)", type=['csv'])
@@ -184,11 +180,12 @@ if contabilidade and extrato:
                 st.session_state['df_resultado'] = df_resultado
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
-                st.session_state['df_resultado'] = None # Garante que um resultado com erro seja nulo
+                # Garante que um resultado com erro seja nulo para não quebrar a aplicação
+                st.session_state['df_resultado'] = None 
 else:
     st.sidebar.warning("Por favor, carregue os dois arquivos.")
 
-# MUDANÇA: Adicionada verificação para garantir que o resultado não é Nulo.
+# Verificação de segurança: checa se o resultado existe e se não é Nulo
 if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is not None:
     df_final_formatado = st.session_state['df_resultado']
     
