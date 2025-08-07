@@ -8,23 +8,20 @@ from datetime import datetime
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
 def realizar_conciliacao(contabilidade_file, extrato_file):
-    # Leitura do arquivo da contabilidade
+    # --- Processamento dos Arquivos Excel ---
     df_contabil = pd.read_excel(contabilidade_file, engine='openpyxl')
-    df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
-    
-    for col in ['Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']:
-        df_contabil[col] = pd.to_numeric(df_contabil[col], errors='coerce').fillna(0)
-
-    # Leitura do arquivo do extrato
+    # A aba correta no extrato é a 'Table 1', conforme nossa análise
     df_extrato = pd.read_excel(extrato_file, engine='openpyxl', sheet_name='Table 1')
+
+    df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
     df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
 
-    for df in [df_extrato]:
+    for df in [df_contabil, df_extrato]:
         for col in df.columns:
             if 'Saldo' in col:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-    # Lógica de Junção e Reestruturação
+    # --- Lógica de Junção e Reestruturação ---
     def extrair_chave(texto_conta):
         try:
             return int(re.sub(r'\D', '', str(texto_conta)))
@@ -38,22 +35,27 @@ def realizar_conciliacao(contabilidade_file, extrato_file):
         df.dropna(subset=['Conta_Chave'], inplace=True)
         df['Conta_Chave'] = df['Conta_Chave'].astype(int)
 
+    # MUDANÇA: Preservar a coluna 'Conta' durante a agregação
     df_contabil_pivot = df_contabil.groupby('Conta_Chave').agg({
-        'Titular': 'first',
+        'Conta': 'first', # Pega a primeira ocorrência do nome da conta
         'Saldo_Corrente_Contabil': 'sum',
         'Saldo_Aplicado_Contabil': 'sum'
     }).reset_index()
 
     df_extrato_pivot = df_extrato.groupby('Conta_Chave')[['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']].sum().reset_index()
 
+    # Consolidação e Reestruturação Final
     df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
     df_final.fillna(0, inplace=True)
-    df_final.rename(columns={'Titular': 'Domicilio_Bancario'}, inplace=True)
-    df_final['Domicilio_Bancario'].fillna('Conta sem descrição no arquivo contábil', inplace=True)
+    
+    # MUDANÇA: Renomeia a coluna 'Conta' para ser o novo identificador
+    df_final.rename(columns={'Conta': 'Domicilio_Bancario'}, inplace=True)
+    df_final['Domicilio_Bancario'].fillna('Conta sem descrição', inplace=True)
 
     df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
     
+    # MUDANÇA: Usa o novo identificador 'Domicilio_Bancario' (que agora contém a conta) como índice
     df_final = df_final.set_index('Domicilio_Bancario')
     df_final = df_final[[
         'Saldo_Corrente_Contabil', 'Saldo_Corrente_Extrato', 'Diferenca_Movimento',
@@ -158,8 +160,6 @@ if 'df_resultado' in st.session_state:
         else:
             st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
             formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
-            
-            # MUDANÇA: Removida a função .map() que estava causando o erro de incompatibilidade.
             st.dataframe(df_para_mostrar.style.format(formatter=formatters))
 
         st.header("Download do Relatório Completo")
