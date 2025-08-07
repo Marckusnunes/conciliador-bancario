@@ -10,24 +10,14 @@ from datetime import datetime
 # --- Bloco 1: Lógica Principal da Conciliação ---
 def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     # --- Processamento do Relatório Contábil (contabilidade) ---
-    dados_relatorio = []
-    stringio_report = io.StringIO(arquivo_relatorio.getvalue().decode('latin-1'))
-    reader_report = csv.reader(stringio_report, delimiter=';')
+    # Leitor robusto: ignora o cabeçalho original e força os nomes corretos.
+    df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1', header=0, skiprows=[1])
+    df_report.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
     
-    header_report = next(reader_report, None)
-    
-    for row in reader_report:
-        if len(row) >= 8:
-            dados_relatorio.append(row[:8])
-
-    colunas_report = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
-    df_report = pd.DataFrame(dados_relatorio, columns=colunas_report)
-
     colunas_numericas_report = ["Saldo_Final"]
     for col in colunas_numericas_report:
-        if col in df_report.columns:
-            df_report[col] = df_report[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-            df_report[col] = pd.to_numeric(df_report[col], errors='coerce')
+        df_report[col] = df_report[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        df_report[col] = pd.to_numeric(df_report[col], errors='coerce')
     
     def extrair_conta_chave_report(texto_conta):
         match = re.search(r'\d{7,}', str(texto_conta))
@@ -49,13 +39,16 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     mapa_domicilio = df_report[['Conta_Chave', 'Domicilio_Bancario']].drop_duplicates().set_index('Conta_Chave')
 
     # --- Processamento do Extrato Consolidado (extrato) ---
+    # Leitor manual e robusto para o CSV inconsistente
     dados_extrato = []
     stringio_extrato = io.StringIO(arquivo_extrato_consolidado.getvalue().decode('latin-1'))
-    next(stringio_extrato)
-    reader_extrato = csv.reader(stringio_extrato, quotechar='"', delimiter=',')
-    for row in reader_extrato:
-        if len(row) >= 6:
-            dados_extrato.append(row[:6])
+    next(stringio_extrato) # Pula o cabeçalho
+    for line in stringio_extrato:
+        # Remove aspas e quebras de linha, depois divide por vírgula
+        cleaned_line = line.replace('"', '').strip()
+        parts = cleaned_line.split(',')
+        if len(parts) >= 6:
+            dados_extrato.append(parts[:6])
 
     colunas_extrato = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado']
     df_extrato = pd.DataFrame(dados_extrato, columns=colunas_extrato)
@@ -182,24 +175,4 @@ if 'df_resultado' in st.session_state:
     df_final_formatado = st.session_state['df_resultado']
     st.header("Resultado da Conciliação Consolidada")
     
-    df_para_mostrar = df_final_formatado[
-        (df_final_formatado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
-        (df_final_formatado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
-    ].copy()
-    
-    if df_para_mostrar.empty:
-        st.success("Ótima notícia! Nenhuma divergência encontrada.")
-    else:
-        st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-        formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
-        st.dataframe(df_para_mostrar.style.format(formatter=formatters).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')]))
-
-    st.header("Download do Relatório Completo")
-    st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.download_button("Baixar em CSV", df_final_formatado.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
-    with col2:
-        st.download_button("Baixar em Excel", to_excel(df_final_formatado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    with col3:
-        st.download_button("Baixar em PDF", create_pdf(df_final_formatado), 'relatorio_consolidado.pdf', 'application/pdf')
+    df
