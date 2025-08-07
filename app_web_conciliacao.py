@@ -165,7 +165,7 @@ def create_pdf(df):
 
 # --- Bloco 3: Interface Web com Streamlit ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide")
-st.title("Ferramenta de Conciliação de Saldos Bancários")
+st.title("Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
 contabilidade_bruto = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV ou XLSX)", type=['csv', 'xlsx', 'xls'])
