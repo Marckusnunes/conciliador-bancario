@@ -12,29 +12,33 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
     """
     Esta função contém a sua lógica para transformar o relatório contábil bruto
     no formato limpo e consolidado, pronto para a conciliação.
-    MUDANÇA: Agora lê o arquivo como Excel.
     """
-    # Lê o arquivo como Excel, não mais como CSV
-    df = pd.read_excel(arquivo_bruto_contabil, engine='openpyxl')
+    df = pd.read_csv(arquivo_bruto_contabil, sep=';', encoding='latin1')
     
-    # Atribui nomes de coluna consistentes
-    df.columns = [
-        'Unidade Gestora', 'Domicílio bancário', 'Conta contábil', 'Conta Corrente',
-        'Saldo Inicial', 'No Mês', 'No Mês.1', 'Saldo Final'
-    ]
+    # Atribui nomes de coluna consistentes, assumindo 8 colunas no arquivo bruto
+    if len(df.columns) >= 8:
+        df = df.iloc[:,:8]
+        df.columns = [
+            'Unidade_Gestora', 'Domicilio_Bancario', 'Conta_Contabil', 'Conta_Corrente',
+            'Saldo_Inicial', 'Debito', 'Credito', 'Saldo_Final'
+        ]
+    else: # Fallback para outros formatos
+        # Adicione aqui a lógica se o arquivo bruto tiver um formato diferente
+        st.error("Formato do relatório contábil bruto não reconhecido.")
+        return pd.DataFrame()
 
-    df.dropna(subset=['Domicílio bancário'], inplace=True)
-    df = df[df['Conta contábil'] != 'Total por Domicílio Bancário'].copy()
+    df.dropna(subset=['Domicilio_Bancario'], inplace=True)
+    df = df[df['Conta_Contabil'] != 'Total por Domicílio Bancário'].copy()
     
-    df['Saldo Final'] = pd.to_numeric(
-        df['Saldo Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
+    df['Saldo_Final'] = pd.to_numeric(
+        df['Saldo_Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
         errors='coerce'
     ).fillna(0)
 
     df_pivot = df.pivot_table(
-        index='Domicílio bancário',
-        columns='Conta contábil',
-        values='Saldo Final',
+        index='Domicilio_Bancario',
+        columns='Conta_Contabil',
+        values='Saldo_Final',
         aggfunc='sum'
     ).reset_index()
 
@@ -47,21 +51,20 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
         if not isinstance(texto_conta, str): return ""
         try:
             num_sem_zeros = texto_conta.lstrip('0')
-            if not num_sem_zeros: return "0"
             principal = num_sem_zeros[:-1]
             verificador = num_sem_zeros[-1]
             principal_formatado = f"{int(principal):,}".replace(',', '.')
             return f"{principal_formatado}-{verificador}"
         except (ValueError, TypeError, IndexError): return texto_conta
 
-    partes_domicilio = df_pivot['Domicílio bancário'].str.split(' - ', expand=True)
+    partes_domicilio = df_pivot['Domicilio_Bancario'].str.split(' - ', expand=True)
     
     df_final = pd.DataFrame()
     df_final['Agencia'] = partes_domicilio.get(1)
     df_final['Conta'] = partes_domicilio.get(2).apply(formatar_numero_conta)
     df_final['Titular'] = partes_domicilio.get(3)
     df_final['Saldo Corrente'] = df_pivot.get('Saldo Corrente')
-    df_final['Saldo Cta Invest'] = np.nan
+    df_final['Saldo Cta Invest'] = np.nan # Coluna vazia, como no seu script
     df_final['Saldo Aplicado'] = df_pivot.get('Saldo Aplicado')
     df_final.fillna(0, inplace=True)
     
@@ -169,8 +172,8 @@ st.set_page_config(page_title="Conciliação Bancária", layout="wide")
 st.title("Ferramenta de Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
-# MUDANÇA: O primeiro arquivo agora aceita Excel
-contabilidade_bruto = st.sidebar.file_uploader("Selecione o Relatório Contábil Bruto (XLSX/XLS)", type=['xlsx', 'xls'])
+# MUDANÇA: O primeiro arquivo agora é o CSV Bruto
+contabilidade_bruto = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV Bruto)", type=['csv'])
 extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (XLSX)", type=['xlsx', 'xls'])
 
 st.sidebar.header("2. Processar")
@@ -178,10 +181,12 @@ if contabilidade_bruto and extrato:
     if st.sidebar.button("Conciliar Agora"):
         with st.spinner("Processando..."):
             try:
-                # Primeiro, processa o arquivo bruto para o formato limpo
+                # MUDANÇA: Primeiro, processa o arquivo bruto
+                st.write("Passo 1/2: Preparando o relatório contábil...")
                 df_contabil_processado = processar_relatorio_bruto(contabilidade_bruto)
                 
                 # Depois, realiza a conciliação com o resultado
+                st.write("Passo 2/2: Realizando a conciliação...")
                 df_resultado_final = realizar_conciliacao(df_contabil_processado, extrato)
 
                 st.success("Conciliação Concluída com Sucesso!")
@@ -189,7 +194,7 @@ if contabilidade_bruto and extrato:
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
 else:
-    st.sidebar.warning("Por favor, carregue o relatório bruto e o extrato consolidado.")
+    st.sidebar.warning("Por favor, carregue o CSV bruto e o extrato em Excel.")
 
 if 'df_resultado' in st.session_state:
     df_final_formatado = st.session_state['df_resultado']
