@@ -8,37 +8,41 @@ from datetime import datetime
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
 def realizar_conciliacao(contabilidade_file, extrato_file):
-    # --- Processamento do Relatório Contábil (agora simplificado) ---
-    df_contabil = pd.read_csv(contabilidade_file, sep=';', encoding='latin-1')
+    # --- Processamento de Ambos os Arquivos (Lógica Simplificada) ---
+    # Agora esperamos que ambos os arquivos sejam CSVs limpos, separados por vírgula.
+    df_contabil = pd.read_csv(contabilidade_file, sep=',', encoding='latin-1')
+    df_extrato = pd.read_csv(extrato_file, sep=',', encoding='latin-1')
+
+    # Renomear colunas para evitar conflitos e para clareza
     df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
-    
-    # --- Processamento do Extrato Consolidado (agora simplificado) ---
-    df_extrato = pd.read_csv(extrato_file, sep=';', encoding='latin-1')
     df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
 
-    # --- Limpeza e Preparação de Ambos os Arquivos ---
-    dataframes = {'contabil': df_contabil, 'extrato': df_extrato}
-    for nome, df in dataframes.items():
+    dataframes = [df_contabil, df_extrato]
+    for df in dataframes:
         # Limpar a coluna 'Conta' para criar a chave de ligação
         df['Conta_Chave'] = df['Conta'].astype(str).apply(lambda x: re.sub(r'\D', '', x))
         df.dropna(subset=['Conta_Chave'], inplace=True)
         df = df[df['Conta_Chave'] != '']
         df['Conta_Chave'] = df['Conta_Chave'].astype(int)
         
-        # Limpar colunas de saldo
-        sufixo = '_Contabil' if nome == 'contabil' else '_Extrato'
-        colunas_saldo = [f'Saldo_Corrente{sufixo}', f'Saldo_Aplicado{sufixo}']
-        for col in colunas_saldo:
-            if col in df.columns:
-                df[col] = pd.to_numeric(
-                    df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
-                    errors='coerce'
-                ).fillna(0)
+        # Limpar colunas de saldo (agora ambas usam ponto como decimal)
+        for col in df.columns:
+            if 'Saldo' in col:
+                # Converte para numérico, tratando erros e valores nulos
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
     # --- Consolidação e Reestruturação Final ---
     df_contabil_pivot = df_contabil[['Conta_Chave', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
     df_extrato_pivot = df_extrato[['Conta_Chave', 'Conta', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']]
     
+    # Agrupa os dados para garantir uma linha por conta
+    df_contabil_pivot = df_contabil_pivot.groupby('Conta_Chave').sum().reset_index()
+    df_extrato_pivot = df_extrato_pivot.groupby('Conta_Chave').agg({
+        'Conta': 'first',
+        'Saldo_Corrente_Extrato': 'sum',
+        'Saldo_Aplicado_Extrato': 'sum'
+    }).reset_index()
+
     df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
     df_final.fillna(0, inplace=True)
     df_final.rename(columns={'Conta': 'Domicilio_Bancario'}, inplace=True)
@@ -119,8 +123,8 @@ st.set_page_config(page_title="Conciliação Bancária", layout="wide")
 st.title("Ferramenta de Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
-contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV ajustado)", type=['csv'])
-extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV ajustado)", type=['csv'])
+contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV)", type=['csv'])
+extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV)", type=['csv'])
 
 st.sidebar.header("2. Processar")
 if contabilidade and extrato:
@@ -133,7 +137,7 @@ if contabilidade and extrato:
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
 else:
-    st.sidebar.warning("Por favor, carregue os dois arquivos ajustados.")
+    st.sidebar.warning("Por favor, carregue os dois arquivos.")
 
 if 'df_resultado' in st.session_state:
     df_final_formatado = st.session_state['df_resultado']
