@@ -12,9 +12,11 @@ def realizar_conciliacao(contabilidade_file, extrato_file):
     df_contabil = pd.read_excel(contabilidade_file, engine='openpyxl')
     df_extrato = pd.read_excel(extrato_file, engine='openpyxl', sheet_name='Table 1')
 
+    # Renomeia as colunas para um padrão consistente
     df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
     df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
 
+    # Converte colunas de saldo para numérico, tratando erros e valores nulos
     for df in [df_contabil, df_extrato]:
         for col in df.columns:
             if 'Saldo' in col:
@@ -22,41 +24,41 @@ def realizar_conciliacao(contabilidade_file, extrato_file):
 
     # --- Lógica de Junção e Reestruturação ---
     def extrair_chave(texto_conta):
-        try:
-            return int(re.sub(r'\D', '', str(texto_conta)))
-        except (ValueError, IndexError):
-            return None
+        try: return int(re.sub(r'\D', '', str(texto_conta)))
+        except (ValueError, IndexError): return None
             
     df_contabil['Conta_Chave'] = df_contabil['Conta'].apply(extrair_chave)
     df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_chave)
     
     for df in [df_contabil, df_extrato]:
         df.dropna(subset=['Conta_Chave', 'Conta'], inplace=True)
-        df = df[df['Conta_Chave'] != 0]
         df['Conta_Chave'] = df['Conta_Chave'].astype(int)
 
-    # MUDANÇA: Preservar a coluna 'Conta' para ser o identificador.
+    # Prepara os dataframes para a junção, mantendo a coluna 'Conta' original
     df_contabil_pivot = df_contabil.groupby('Conta_Chave').agg({
         'Conta': 'first',
         'Saldo_Corrente_Contabil': 'sum',
         'Saldo_Aplicado_Contabil': 'sum'
     }).reset_index()
 
-    df_extrato_pivot = df_extrato.groupby('Conta_Chave')[['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']].sum().reset_index()
+    df_extrato_pivot = df_extrato.groupby('Conta_Chave').agg({
+        'Conta': 'first',
+        'Saldo_Corrente_Extrato': 'sum',
+        'Saldo_Aplicado_Extrato': 'sum'
+    }).reset_index()
 
     # Consolidação e Reestruturação Final
     df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
     df_final.fillna(0, inplace=True)
     
-    # MUDANÇA: Renomeia a coluna 'Conta' para um nome mais apropriado para o índice.
-    df_final.rename(columns={'Conta': 'Conta Bancária'}, inplace=True)
-    df_final['Conta Bancária'].fillna('Conta não encontrada', inplace=True)
-
+    # MUDANÇA: Cria a coluna de identificação final combinando as colunas 'Conta' de ambos os arquivos
+    # Isso garante que mesmo contas que só existem em um dos arquivos tenham seu identificador.
+    df_final['Conta_Bancaria'] = df_final['Conta_x'].combine_first(df_final['Conta_y'])
+    
     df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
     
-    # MUDANÇA: Usa a coluna 'Conta Bancária' como índice do relatório.
-    df_final = df_final.set_index('Conta Bancária')
+    df_final = df_final.set_index('Conta_Bancaria')
     df_final = df_final[[
         'Saldo_Corrente_Contabil', 'Saldo_Corrente_Extrato', 'Diferenca_Movimento',
         'Saldo_Aplicado_Contabil', 'Saldo_Aplicado_Extrato', 'Diferenca_Aplicacao'
@@ -166,7 +168,7 @@ if 'df_resultado' in st.session_state:
         st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
         col1, col2, col3 = st.columns(3)
         with col1:
-            # MUDANÇA: Aplaina as colunas para uma exportação limpa em CSV
+            # MUDANÇA: Aplaina as colunas para uma exportação limpa e legível em CSV
             df_csv = df_final_formatado.copy()
             df_csv.columns = [' - '.join(col).strip() for col in df_csv.columns.values]
             st.download_button("Baixar em CSV", df_csv.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
