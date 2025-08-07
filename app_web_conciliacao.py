@@ -10,10 +10,16 @@ from datetime import datetime
 # --- Bloco 1: Lógica Principal da Conciliação ---
 def realizar_conciliacao(contabilidade_file, extrato_file):
     # --- Processamento do Relatório Contábil (contabilidade) ---
-    # MUDANÇA DEFINITIVA: Lógica de leitura e limpeza refeita para ser 100% compatível com o arquivo fornecido.
+    # MUDANÇA FINAL: Leitor inteligente que se adapta ao número de colunas do arquivo.
     df_report = pd.read_csv(contabilidade_file, sep=';', encoding='latin-1', header=0)
-    # Renomeia as colunas baseado na estrutura real do arquivo "Saldos_Bancarios_Limpo.csv"
-    df_report.columns = ['Unidade_Gestora', 'Domicilio_Bancario', 'Conta_Contabil', 'Conta_Corrente', 'Saldo_Final']
+    
+    if len(df_report.columns) >= 8:
+        # Se for o arquivo "completo"
+        df_report = df_report.iloc[:, :8] # Pega apenas as 8 primeiras colunas
+        df_report.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
+    elif len(df_report.columns) == 5:
+        # Se for o arquivo "limpo"
+        df_report.columns = ['Unidade_Gestora', 'Domicilio_Bancario', 'Conta_Contabil', 'Conta_Corrente', 'Saldo_Final']
 
     df_report['Saldo_Final'] = pd.to_numeric(
         df_report['Saldo_Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
@@ -41,7 +47,9 @@ def realizar_conciliacao(contabilidade_file, extrato_file):
 
     # --- Processamento do Extrato Consolidado (extrato) ---
     colunas_extrato = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado', 'Vazio']
-    df_extrato = pd.read_csv(extrato_file, sep=',', encoding='latin-1', quotechar='"', skiprows=1, header=None, names=colunas_extrato)
+    df_extrato = pd.read_csv(
+        extrato_file, sep=',', encoding='latin-1', quotechar='"', skiprows=1, header=None, names=colunas_extrato, on_bad_lines='skip'
+    )
     
     colunas_saldo_extrato = ['Saldo_Corrente', 'Saldo_Aplicado']
     for col in colunas_saldo_extrato:
