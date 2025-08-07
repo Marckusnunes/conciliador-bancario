@@ -163,8 +163,7 @@ def create_pdf(df):
 
 # --- Bloco 3: Interface Web com Streamlit ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide")
-# TÍTULO ALTERADO PARA VERIFICAÇÃO DE ATUALIZAÇÃO
-st.title("VERSÃO FINAL CORRIGIDA - Conciliador")
+st.title("Ferramenta de Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
 contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV)", type=['csv'])
@@ -173,6 +172,10 @@ extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV)", type
 st.sidebar.header("2. Processar")
 if contabilidade and extrato:
     if st.sidebar.button("Conciliar Agora"):
+        # Limpa o resultado anterior antes de processar
+        if 'df_resultado' in st.session_state:
+            del st.session_state['df_resultado']
+            
         with st.spinner("Processando..."):
             try:
                 df_resultado = realizar_conciliacao(contabilidade, extrato)
@@ -180,37 +183,39 @@ if contabilidade and extrato:
                 st.session_state['df_resultado'] = df_resultado
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
-                # Garante que um resultado com erro seja nulo para não quebrar a aplicação
                 st.session_state['df_resultado'] = None 
 else:
     st.sidebar.warning("Por favor, carregue os dois arquivos.")
 
-# Verificação de segurança: checa se o resultado existe e se não é Nulo
-if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is not None:
-    df_final_formatado = st.session_state['df_resultado']
+# Verificação de segurança mais robusta
+if 'df_resultado' in st.session_state:
+    resultado = st.session_state['df_resultado']
     
-    if df_final_formatado.empty:
-        st.warning("O processamento foi concluído, mas não resultou em dados. Verifique se os arquivos de entrada são válidos e contêm contas correspondentes.")
-    else:
-        st.header("Resultado da Conciliação Consolidada")
-        df_para_mostrar = df_final_formatado[
-            (df_final_formatado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
-            (df_final_formatado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
-        ].copy()
-        
-        if df_para_mostrar.empty:
-            st.success("Ótima notícia! Nenhuma divergência encontrada.")
+    # Verifica se o resultado é de fato uma tabela (DataFrame)
+    if isinstance(resultado, pd.DataFrame):
+        if resultado.empty:
+            st.warning("O processamento foi concluído, mas não resultou em dados. Verifique se os arquivos de entrada são válidos e contêm contas correspondentes.")
         else:
-            st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-            formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
-            st.dataframe(df_para_mostrar.style.format(formatter=formatters).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')]))
+            st.header("Resultado da Conciliação Consolidada")
+            df_para_mostrar = resultado[
+                (resultado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
+                (resultado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
+            ].copy()
+            
+            if df_para_mostrar.empty:
+                st.success("Ótima notícia! Nenhuma divergência encontrada.")
+            else:
+                st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
+                formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
+                st.dataframe(df_para_mostrar.style.format(formatter=formatters).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')]))
 
-        st.header("Download do Relatório Completo")
-        st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.download_button("Baixar em CSV", df_final_formatado.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
-        with col2:
-            st.download_button("Baixar em Excel", to_excel(df_final_formatado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        with col3:
-            st.download_button("Baixar em PDF", create_pdf(df_final_formatado), 'relatorio_consolidado.pdf', 'application/pdf')
+            st.header("Download do Relatório Completo")
+            st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.download_button("Baixar em CSV", resultado.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
+            with col2:
+                st.download_button("Baixar em Excel", to_excel(resultado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            with col3:
+                st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
+    # Não faz nada se o resultado for None, pois a mensagem de erro já foi exibida
