@@ -10,19 +10,9 @@ from datetime import datetime
 # --- Bloco 1: Lógica Principal da Conciliação ---
 def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     # --- Processamento do Relatório Contábil (contabilidade) ---
-    dados_relatorio = []
-    stringio_report = io.StringIO(arquivo_relatorio.getvalue().decode('latin-1'))
-    reader_report = csv.reader(stringio_report, delimiter=';')
+    df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1', header=0, skiprows=[1])
+    df_report.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
     
-    header_report = next(reader_report, None)
-    
-    for row in reader_report:
-        if len(row) >= 8:
-            dados_relatorio.append(row[:8])
-
-    colunas_report = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
-    df_report = pd.DataFrame(dados_relatorio, columns=colunas_report)
-
     colunas_numericas_report = ["Saldo_Final"]
     for col in colunas_numericas_report:
         if col in df_report.columns:
@@ -49,16 +39,17 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     mapa_domicilio = df_report[['Conta_Chave', 'Domicilio_Bancario']].drop_duplicates().set_index('Conta_Chave')
 
     # --- Processamento do Extrato Consolidado (extrato) ---
-    dados_extrato = []
-    stringio_extrato = io.StringIO(arquivo_extrato_consolidado.getvalue().decode('latin-1'))
-    next(stringio_extrato)
-    reader_extrato = csv.reader(stringio_extrato, quotechar='"', delimiter=',')
-    for row in reader_extrato:
-        if len(row) >= 6:
-            dados_extrato.append(row[:6])
-
-    colunas_extrato = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado']
-    df_extrato = pd.DataFrame(dados_extrato, columns=colunas_extrato)
+    # MUDANÇA FINAL: Leitor robusto que ignora o cabeçalho e força os nomes das colunas.
+    colunas_extrato = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado', 'Vazio']
+    df_extrato = pd.read_csv(
+        arquivo_extrato_consolidado, 
+        sep=',', 
+        encoding='latin-1', 
+        quotechar='"',
+        skiprows=1, # Pula o cabeçalho problemático
+        header=None, # Informa que não há cabeçalho a ser lido
+        names=colunas_extrato # Força os nomes corretos para as colunas
+    )
     
     colunas_saldo_extrato = ['Saldo_Corrente', 'Saldo_Aplicado']
     for col in colunas_saldo_extrato:
