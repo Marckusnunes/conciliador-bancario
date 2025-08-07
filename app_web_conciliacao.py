@@ -10,8 +10,7 @@ from datetime import datetime
 def realizar_conciliacao(contabilidade_file, extrato_file):
     # --- Processamento dos Arquivos Excel ---
     df_contabil = pd.read_excel(contabilidade_file, engine='openpyxl')
-    # Assumindo que a aba correta no extrato é a primeira, ou especifique com sheet_name='NomeDaAba'
-    df_extrato = pd.read_excel(extrato_file, engine='openpyxl')
+    df_extrato = pd.read_excel(extrato_file, engine='openpyxl', sheet_name='Table 1')
 
     # Renomeia as colunas para um padrão consistente
     df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
@@ -128,7 +127,6 @@ st.set_page_config(page_title="Conciliação Bancária", layout="wide")
 st.title("Ferramenta de Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
-# MUDANÇA: Alterado o tipo de arquivo para aceitar Excel e atualizado o rótulo
 contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (XLSX)", type=['xlsx', 'xls'])
 extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (XLSX)", type=['xlsx', 'xls'])
 
@@ -160,7 +158,12 @@ if 'df_resultado' in st.session_state:
         else:
             st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
             formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
-            st.dataframe(df_para_mostrar.style.format(formatter=formatters).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')]))
+            
+            # MUDANÇA: Invertida a ordem de .map() e .format() para corrigir o erro
+            st.dataframe(df_para_mostrar.style
+                .map(lambda x: 'color: red' if x < 0 else None, subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')])
+                .format(formatter=formatters)
+            )
 
         st.header("Download do Relatório Completo")
         st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
