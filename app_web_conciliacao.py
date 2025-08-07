@@ -5,8 +5,8 @@ import io
 import numpy as np
 from fpdf import FPDF
 from datetime import datetime
-# NOVAS BIBLIOTECAS PARA FORMATAÇÃO EXCEL
-from openpyxl.styles import Font, Alignment, Border, Side
+# MUDANÇA: Importa PatternFill diretamente da biblioteca de estilos
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
@@ -55,24 +55,21 @@ def realizar_conciliacao(contabilidade_file, extrato_file):
     return df_final
 
 # --- Bloco 2: Funções para Geração de Arquivos ---
-# MUDANÇA: Função to_excel completamente reescrita para adicionar formatação profissional
 @st.cache_data
 def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=True, sheet_name='Conciliacao', startrow=1) # startrow=1 para dar espaço para o cabeçalho mesclado
-
+        df.to_excel(writer, index=True, sheet_name='Conciliacao', startrow=1) 
         workbook = writer.book
         worksheet = writer.sheets['Conciliacao']
 
-        # --- Define Estilos ---
         font_header = Font(bold=True, color="FFFFFF")
         align_header = Alignment(horizontal='center', vertical='center')
-        fill_header = pd.io.excel._openpyxl.styles.PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        # MUDANÇA: Usa a classe PatternFill importada diretamente
+        fill_header = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
         border_thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
         number_format_br = '#,##0.00'
 
-        # --- Mescla e Formata Cabeçalho Nível 1 ---
         worksheet.merge_cells('B1:D1')
         cell_movimento = worksheet['B1']
         cell_movimento.value = 'Conta Movimento'
@@ -87,42 +84,31 @@ def to_excel(df):
         cell_aplicacao.alignment = align_header
         cell_aplicacao.fill = fill_header
         
-        # --- Formata Cabeçalho Nível 2 e do Índice ---
         header_cells = worksheet['A2:G2']
         for row in header_cells:
             for cell in row:
                 cell.font = Font(bold=True)
                 cell.alignment = Alignment(horizontal='center', vertical='center')
 
-        # --- Formata Células de Dados e Ajusta Largura das Colunas ---
         for col_idx, col in enumerate(worksheet.columns, 1):
             max_length = 0
             column_letter = get_column_letter(col_idx)
-            
             for cell_idx, cell in enumerate(col, 0):
-                # Aplica borda em todas as células da tabela
-                if cell_idx > 0: # Ignora a linha 0 que está fora da tabela principal
+                if cell_idx > 0:
                     cell.border = border_thin
-                
-                # Formatação para colunas de dados (a partir da linha 3)
                 if cell_idx > 1:
-                    if col_idx == 1: # Coluna do índice (Conta Bancária)
+                    if col_idx == 1:
                         cell.alignment = Alignment(horizontal='left', vertical='center')
-                    else: # Colunas de valores
+                    else:
                         cell.number_format = number_format_br
                         cell.alignment = Alignment(horizontal='right', vertical='center')
-                
-                # Lógica para auto-ajuste da largura
                 try:
                     if len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
-                except:
-                    pass
+                except: pass
             adjusted_width = (max_length + 2)
             worksheet.column_dimensions[column_letter].width = adjusted_width
-
     return output.getvalue()
-
 
 class PDF(FPDF):
     def header(self):
@@ -157,7 +143,8 @@ st.set_page_config(page_title="Conciliação Bancária", layout="wide", page_ico
 st.title("🏦 Prefeitura da Cidade do Rio de Janeiro")
 st.header("Controladoria Geral do Município")
 st.markdown("---")
-st.subheader("Ferramenta de Conciliação de Saldos Bancários")
+# MUDANÇA: Subtítulo da ferramenta atualizado
+st.subheader("Conciliação de Saldos Bancários e Contábeis")
 
 st.sidebar.header("1. Carregar Arquivos")
 contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (XLSX)", type=['xlsx', 'xls'])
