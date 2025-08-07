@@ -2,14 +2,31 @@ import streamlit as st
 import pandas as pd
 import re
 import io
+import numpy as np
+from fpdf import FPDF
+from datetime import datetime
 
-# --- Bloco 1: Lógica de Diagnóstico ---
-def realizar_diagnostico(contabilidade_file, extrato_file):
-    
-    # --- Processamento do Relatório Contábil ---
+# --- Bloco 1: Lógica Principal da Conciliação (Reescrita) ---
+def realizar_conciliacao(contabilidade_file, extrato_file):
+    # --- Processamento dos Arquivos Excel ---
     df_contabil = pd.read_excel(contabilidade_file, engine='openpyxl')
-    df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
+    df_extrato = pd.read_excel(extrato_file, engine='openpyxl', sheet_name='Table 1')
 
+    # Renomeia colunas para um padrão consistente e seleciona as necessárias
+    df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
+    df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
+    
+    df_contabil = df_contabil[['Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
+    df_extrato = df_extrato[['Conta', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']]
+
+    # Converte colunas de saldo para numérico, tratando erros e valores nulos
+    for df in [df_contabil, df_extrato]:
+        for col in df.columns:
+            if 'Saldo' in col:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    # --- Lógica de Junção e Reestruturação ---
+    # Cria uma chave de ligação limpa (só números) para ambos os dataframes
     def extrair_chave(texto_conta):
         try:
             return int(re.sub(r'\D', '', str(texto_conta)))
@@ -17,23 +34,105 @@ def realizar_diagnostico(contabilidade_file, extrato_file):
             return None
             
     df_contabil['Conta_Chave'] = df_contabil['Conta'].apply(extrair_chave)
-    debug_contabil = df_contabil[['Conta', 'Titular', 'Conta_Chave']].dropna(subset=['Conta_Chave']).drop_duplicates()
-    debug_contabil['Conta_Chave'] = debug_contabil['Conta_Chave'].astype(int)
-
-    # --- Processamento do Extrato Consolidado ---
-    df_extrato = pd.read_excel(extrato_file, engine='openpyxl', sheet_name='Table 1')
-    df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
-    
     df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_chave)
-    debug_extrato = df_extrato[['Conta', 'Titular', 'Conta_Chave']].dropna(subset=['Conta_Chave']).drop_duplicates()
-    debug_extrato['Conta_Chave'] = debug_extrato['Conta_Chave'].astype(int)
     
-    return debug_contabil, debug_extrato
+    # Remove linhas onde a chave não pôde ser criada
+    df_contabil.dropna(subset=['Conta_Chave'], inplace=True)
+    df_extrato.dropna(subset=['Conta_Chave'], inplace=True)
+    df_contabil['Conta_Chave'] = df_contabil['Conta_Chave'].astype(int)
+    df_extrato['Conta_Chave'] = df_extrato['Conta_Chave'].astype(int)
 
-# --- Bloco 2: Interface Web de Diagnóstico ---
-st.set_page_config(page_title="Diagnóstico de Conciliação", layout="wide")
-st.title("Ferramenta de Diagnóstico de Chaves")
-st.warning("Esta é uma versão de diagnóstico para verificar a correspondência de contas entre os arquivos.")
+    # Agrupa os dados para garantir uma linha por conta, caso haja duplicatas
+    df_contabil_pivot = df_contabil.groupby('Conta_Chave').agg({
+        'Conta': 'first',
+        'Titular': 'first',
+        'Saldo_Corrente_Contabil': 'sum',
+        'Saldo_Aplicado_Contabil': 'sum'
+    }).reset_index()
+
+    df_extrato_pivot = df_extrato.groupby('Conta_Chave')[['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']].sum().reset_index()
+
+    # Consolidação e Reestruturação Final
+    df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
+    df_final.fillna(0, inplace=True)
+    # Usa a coluna 'Conta' do arquivo contábil como identificador principal
+    df_final.rename(columns={'Conta': 'Domicilio_Bancario'}, inplace=True)
+    df_final['Domicilio_Bancario'].fillna('Conta sem descrição no arquivo contábil', inplace=True)
+
+    df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
+    df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
+    
+    df_final = df_final.set_index('Domicilio_Bancario')
+    df_final = df_final[[
+        'Saldo_Corrente_Contabil', 'Saldo_Corrente_Extrato', 'Diferenca_Movimento',
+        'Saldo_Aplicado_Contabil', 'Saldo_Aplicado_Extrato', 'Diferenca_Aplicacao'
+    ]]
+    
+    df_final.columns = pd.MultiIndex.from_tuples([
+        ('Conta Movimento', 'Saldo Contábil'), ('Conta Movimento', 'Saldo Extrato'), ('Conta Movimento', 'Diferença'),
+        ('Aplicação Financeira', 'Saldo Contábil'), ('Aplicação Financeira', 'Saldo Extrato'), ('Aplicação Financeira', 'Diferença')
+    ], names=['Grupo', 'Item'])
+    
+    return df_final
+
+# --- Bloco 2: Funções para Geração de Arquivos ---
+@st.cache_data
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=True, sheet_name='Conciliacao_Consolidada')
+    return output.getvalue()
+
+class PDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 10)
+        self.cell(0, 10, 'Relatório de Conciliação Consolidado por Conta', 0, 1, 'C')
+        self.ln(5)
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
+    def create_table(self, data):
+        self.set_font('Arial', '', 7)
+        line_height = self.font_size * 2.5
+        col_width = 30 
+        
+        self.set_font('Arial', 'B', 8)
+        index_name = data.index.name if data.index.name else 'ID'
+        self.cell(55, line_height, index_name, 1, 0, 'C')
+        self.cell(col_width * 3, line_height, 'Conta Movimento', 1, 0, 'C')
+        self.cell(col_width * 3, line_height, 'Aplicação Financeira', 1, 0, 'C')
+        self.ln(line_height)
+        
+        self.set_font('Arial', 'B', 7)
+        self.cell(55, line_height, '', 1, 0, 'C')
+        sub_headers = ['Saldo Contábil', 'Saldo Extrato', 'Diferença']
+        for _ in range(2):
+            for sub_header in sub_headers:
+                self.cell(col_width, line_height, sub_header, 1, 0, 'C')
+        self.ln(line_height)
+
+        self.set_font('Arial', '', 6)
+        formatted_data = data.copy()
+        for col_tuple in formatted_data.columns:
+             formatted_data[col_tuple] = formatted_data[col_tuple].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
+
+        for index, row in formatted_data.iterrows():
+            display_index = (index[:35] + '...') if len(str(index)) > 35 else index
+            self.cell(55, line_height, str(display_index), 1, 0, 'L')
+            for item in row:
+                self.cell(col_width, line_height, str(item), 1, 0, 'R')
+            self.ln(line_height)
+
+def create_pdf(df):
+    pdf = PDF('L', 'mm', 'A4')
+    pdf.add_page()
+    pdf.create_table(df)
+    return bytes(pdf.output())
+
+# --- Bloco 3: Interface Web com Streamlit ---
+st.set_page_config(page_title="Conciliação Bancária", layout="wide")
+st.title("Ferramenta de Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
 contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (XLSX)", type=['xlsx', 'xls'])
@@ -41,47 +140,42 @@ extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (XLSX)", typ
 
 st.sidebar.header("2. Processar")
 if contabilidade and extrato:
-    if st.sidebar.button("Diagnosticar Chaves Agora"):
-        with st.spinner("Extraindo chaves de ambos os arquivos..."):
+    if st.sidebar.button("Conciliar Agora"):
+        with st.spinner("Processando..."):
             try:
-                debug_df_report, debug_df_extrato = realizar_diagnostico(contabilidade, extrato)
-                st.success("Diagnóstico concluído!")
-                st.session_state['debug_report'] = debug_df_report
-                st.session_state['debug_extrato'] = debug_df_extrato
+                df_resultado_formatado = realizar_conciliacao(contabilidade, extrato)
+                st.success("Conciliação Concluída com Sucesso!")
+                st.session_state['df_resultado'] = df_resultado_formatado
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
 else:
-    st.sidebar.warning("Por favor, carregue os dois arquivos para diagnóstico.")
+    st.sidebar.warning("Por favor, carregue os dois arquivos Excel.")
 
-if 'debug_report' in st.session_state and 'debug_extrato' in st.session_state:
-    debug_report = st.session_state['debug_report']
-    debug_extrato = st.session_state['debug_extrato']
+if 'df_resultado' in st.session_state:
+    df_final_formatado = st.session_state['df_resultado']
     
-    st.header("Chaves Extraídas do Relatório Contábil")
-    st.write(f"Total de chaves únicas encontradas: {len(debug_report)}")
-    st.dataframe(debug_report)
-    st.download_button(
-        "Baixar Chaves do Relatório", 
-        debug_report.to_csv(index=False, sep=';').encode('utf-8-sig'), 
-        'debug_chaves_relatorio.csv', 
-        'text/csv'
-    )
+    if df_final_formatado is not None and not df_final_formatado.empty:
+        st.header("Resultado da Conciliação Consolidada")
+        df_para_mostrar = df_final_formatado[
+            (df_final_formatado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
+            (df_final_formatado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
+        ].copy()
+        
+        if df_para_mostrar.empty:
+            st.success("Ótima notícia! Nenhuma divergência encontrada.")
+        else:
+            st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
+            formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
+            st.dataframe(df_para_mostrar.style.format(formatter=formatters))
 
-    st.header("Chaves Extraídas do Extrato Consolidado")
-    st.write(f"Total de chaves únicas encontradas: {len(debug_extrato)}")
-    st.dataframe(debug_extrato)
-    st.download_button(
-        "Baixar Chaves do Extrato", 
-        debug_extrato.to_csv(index=False, sep=';').encode('utf-8-sig'), 
-        'debug_chaves_extrato.csv', 
-        'text/csv'
-    )
-    
-    st.header("Análise de Correspondência")
-    chaves_comuns = pd.merge(debug_report, debug_extrato, on='Conta_Chave', how='inner', suffixes=('_contabil', '_extrato'))
-    if chaves_comuns.empty:
-        st.error("ANÁLISE: Nenhuma chave em comum foi encontrada entre os dois arquivos.")
-    else:
-        st.success(f"ANÁLISE: Foram encontradas {len(chaves_comuns)} contas correspondentes entre os dois arquivos.")
-        st.write("Amostra de contas correspondentes:")
-        st.dataframe(chaves_comuns.head())
+        st.header("Download do Relatório Completo")
+        st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            df_csv = df_final_formatado.copy()
+            df_csv.columns = [' - '.join(col).strip() for col in df_csv.columns.values]
+            st.download_button("Baixar em CSV", df_csv.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
+        with col2:
+            st.download_button("Baixar em Excel", to_excel(df_final_formatado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        with col3:
+            st.download_button("Baixar em PDF", create_pdf(df_final_formatado), 'relatorio_consolidado.pdf', 'application/pdf')
