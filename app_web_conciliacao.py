@@ -3,6 +3,7 @@ import pandas as pd
 import re
 import io
 import numpy as np
+import csv  # <-- LINHA ADICIONADA
 from fpdf import FPDF
 from datetime import datetime
 
@@ -13,28 +14,42 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
     Esta função contém a sua lógica para transformar o relatório contábil bruto
     no formato limpo e consolidado, pronto para a conciliação.
     """
-    # Usamos o leitor manual e robusto para o CSV bruto
-    dados_relatorio = []
-    stringio_report = io.StringIO(arquivo_bruto_contabil.getvalue().decode('latin-1'))
-    reader_report = csv.reader(stringio_report, delimiter=';')
-    
-    header_report = next(reader_report, None) # Pula cabeçalho
-    # Pula segundo cabeçalho se existir
-    if header_report and 'Unidade Gestora' in header_report[0]:
-        second_header = next(reader_report, None)
+    # Tenta ler o arquivo como CSV primeiro, que é o formato original bruto
+    try:
+        arquivo_bruto_contabil.seek(0)
+        dados_relatorio = []
+        stringio_report = io.StringIO(arquivo_bruto_contabil.getvalue().decode('latin-1'))
+        reader_report = csv.reader(stringio_report, delimiter=';')
+        
+        # Pula cabeçalhos
+        next(reader_report, None)
+        try:
+            second_header = next(reader_report, None)
+            if 'Unidade Gestora' not in second_header[0]:
+                # Se a segunda linha não for o cabeçalho esperado, adiciona-a aos dados
+                if len(second_header) >= 8: dados_relatorio.append(second_header[:8])
+        except StopIteration:
+            pass
 
-    for row in reader_report:
-        if len(row) >= 8:
-            dados_relatorio.append(row[:8])
+        for row in reader_report:
+            if len(row) >= 8:
+                dados_relatorio.append(row[:8])
 
-    colunas_report = [
-        'Unidade Gestora', 'Domicílio bancário', 'Conta contábil', 'Conta Corrente',
-        'Saldo Inicial', 'Débito', 'Crédito', 'Saldo Final'
-    ]
-    df = pd.DataFrame(dados_relatorio, columns=colunas_report)
+        colunas_report = [
+            'Unidade Gestora', 'Domicílio bancário', 'Conta contábil', 'Conta Corrente',
+            'Saldo Inicial', 'Débito', 'Crédito', 'Saldo Final'
+        ]
+        df = pd.DataFrame(dados_relatorio, columns=colunas_report)
 
+    except Exception:
+        # Se a leitura como CSV falhar, tenta como Excel (para o arquivo ajustado)
+        arquivo_bruto_contabil.seek(0)
+        df = pd.read_excel(arquivo_bruto_contabil, engine='openpyxl')
+
+
+    # Continua com a lógica de pivoteamento que você criou
     df.dropna(subset=['Domicílio bancário'], inplace=True)
-    df = df[~df['Conta contábil'].str.contains('Total por', na=False)].copy()
+    df = df[~df['Conta contábil'].astype(str).str.contains('Total por', na=False)].copy()
     
     df['Saldo Final'] = pd.to_numeric(
         df['Saldo Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
@@ -69,8 +84,8 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
     df_final['Agencia'] = partes_domicilio.get(1)
     df_final['Conta'] = partes_domicilio.get(2).apply(formatar_numero_conta)
     df_final['Titular'] = partes_domicilio.get(3)
-    df_final['Saldo Corrente'] = df_pivot.get('Saldo Corrente')
-    df_final['Saldo Aplicado'] = df_pivot.get('Saldo Aplicado')
+    df_final['Saldo_Corrente_Contabil'] = df_pivot.get('Saldo Corrente')
+    df_final['Saldo_Aplicado_Contabil'] = df_pivot.get('Saldo Aplicado')
     df_final.fillna(0, inplace=True)
     
     return df_final
@@ -78,19 +93,11 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
 def realizar_conciliacao(df_contabil_limpo, extrato_file):
     df_extrato = pd.read_excel(extrato_file, engine='openpyxl', sheet_name='Table 1')
     
-    df_contabil_limpo.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']
     df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
 
-    # MUDANÇA: Aplica a limpeza de número brasileiro para AMBOS os arquivos, garantindo consistência
-    for col in ['Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']:
-        df_contabil_limpo[col] = pd.to_numeric(
-            df_contabil_limpo[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
-            errors='coerce').fillna(0)
-
-    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
-        df_extrato[col] = pd.to_numeric(
-            df_extrato[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
-            errors='coerce').fillna(0)
+    for col in df_extrato.columns:
+        if 'Saldo' in col:
+            df_extrato[col] = pd.to_numeric(df_extrato[col], errors='coerce').fillna(0)
 
     def extrair_chave(texto_conta):
         try: return int(re.sub(r'\D', '', str(texto_conta)))
@@ -165,7 +172,7 @@ st.set_page_config(page_title="Conciliação Bancária", layout="wide")
 st.title("Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
-contabilidade_bruto = st.sidebar.file_uploader("Selecione o Relatório Contábil Bruto (CSV)", type=['csv'])
+contabilidade_bruto = st.sidebar.file_uploader("Selecione o Relatório Contábil Bruto (CSV ou XLSX)", type=['csv', 'xlsx', 'xls'])
 extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (XLSX)", type=['xlsx', 'xls'])
 
 st.sidebar.header("2. Processar")
