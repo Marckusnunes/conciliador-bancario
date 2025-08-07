@@ -9,13 +9,20 @@ from datetime import datetime
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
 def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
-    # --- Processamento do Relatório Contábil ---
-    df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1')
-    if "Unidade Gestora" in df_report.columns[0]:
-        df_report.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
-        if "Unidade Gestora" in df_report.iloc[0].to_string():
-            df_report = df_report.drop(df_report.index[0])
+    # --- Processamento do Relatório Contábil (contabilidade) ---
+    dados_relatorio = []
+    stringio_report = io.StringIO(arquivo_relatorio.getvalue().decode('latin-1'))
+    reader_report = csv.reader(stringio_report, delimiter=';')
     
+    header_report = next(reader_report, None)
+    
+    for row in reader_report:
+        if len(row) >= 8:
+            dados_relatorio.append(row[:8])
+
+    colunas_report = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
+    df_report = pd.DataFrame(dados_relatorio, columns=colunas_report)
+
     colunas_numericas_report = ["Saldo_Final"]
     for col in colunas_numericas_report:
         if col in df_report.columns:
@@ -26,7 +33,8 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
         match = re.search(r'\d{7,}', str(texto_conta))
         return int(match.group(0)) if match else None
 
-    df_report['Conta_Chave'] = df_report['Conta_Corrente'].apply(extrair_conta_chave_report)
+    # MUDANÇA CRUCIAL: Aplicando a extração na coluna "Domicilio_Bancario"
+    df_report['Conta_Chave'] = df_report['Domicilio_Bancario'].apply(extrair_conta_chave_report)
     df_report.dropna(subset=['Conta_Chave'], inplace=True)
     df_report['Conta_Chave'] = df_report['Conta_Chave'].astype(int)
 
@@ -41,12 +49,12 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     df_report_pivot = pd.merge(df_movimento_contabil, df_aplicacao_contabil, on='Conta_Chave', how='outer')
     mapa_domicilio = df_report[['Conta_Chave', 'Domicilio_Bancario']].drop_duplicates().set_index('Conta_Chave')
 
-    # --- Processamento do Extrato Consolidado ---
+    # --- Processamento do Extrato Consolidado (extrato) ---
     dados_extrato = []
-    stringio = io.StringIO(arquivo_extrato_consolidado.getvalue().decode('latin-1'))
-    next(stringio)
-    reader = csv.reader(stringio, quotechar='"', delimiter=',')
-    for row in reader:
+    stringio_extrato = io.StringIO(arquivo_extrato_consolidado.getvalue().decode('latin-1'))
+    next(stringio_extrato)
+    reader_extrato = csv.reader(stringio_extrato, quotechar='"', delimiter=',')
+    for row in reader_extrato:
         if len(row) >= 6:
             dados_extrato.append(row[:6])
 
@@ -76,7 +84,7 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     df_final = pd.merge(df_report_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
     df_final.fillna(0, inplace=True)
     df_final = df_final.join(mapa_domicilio, on='Conta_Chave')
-    df_final['Domicilio_Bancario'].fillna('Não encontrado no relatório', inplace=True)
+    df_final.dropna(subset=['Domicilio_Bancario'], inplace=True)
     df_final = df_final[df_final['Conta_Chave'] != 0]
 
     df_final['Diferenca_Movimento'] = df_final['Saldo_Contabil_Movimento'] - df_final['Saldo_Extrato_Movimento']
@@ -155,15 +163,15 @@ st.set_page_config(page_title="Conciliação Bancária", layout="wide")
 st.title("Ferramenta de Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
-arquivo_relatorio_carregado = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV Original)", type=['csv'])
-arquivo_extrato_consolidado_carregado = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV)", type=['csv'])
+contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV Original)", type=['csv'])
+extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV)", type=['csv'])
 
 st.sidebar.header("2. Processar")
-if arquivo_relatorio_carregado and arquivo_extrato_consolidado_carregado:
+if contabilidade and extrato:
     if st.sidebar.button("Conciliar Agora"):
         with st.spinner("Processando..."):
             try:
-                df_resultado_formatado = realizar_conciliacao(arquivo_relatorio_carregado, arquivo_extrato_consolidado_carregado)
+                df_resultado_formatado = realizar_conciliacao(contabilidade, extrato)
                 st.success("Conciliação Concluída com Sucesso!")
                 st.session_state['df_resultado'] = df_resultado_formatado
             except Exception as e:
