@@ -2,82 +2,63 @@ import streamlit as st
 import pandas as pd
 import re
 import io
-import csv
 import numpy as np
 from fpdf import FPDF
 from datetime import datetime
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
 def realizar_conciliacao(contabilidade_file, extrato_file):
-    # Leitor inteligente que se adapta ao número de colunas do arquivo.
-    df_contabil = pd.read_csv(contabilidade_file, sep=';', encoding='latin-1', header=0)
-    
-    if len(df_contabil.columns) >= 8:
-        df_contabil = df_contabil.iloc[:, :8]
-        df_contabil.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
-    elif len(df_contabil.columns) >= 5:
-        df_contabil = df_contabil.iloc[:, :5]
-        df_contabil.columns = ['Unidade_Gestora', 'Domicilio_Bancario', 'Conta_Contabil', 'Conta_Corrente', 'Saldo_Final']
+    # --- Processamento dos Arquivos Excel ---
+    df_contabil = pd.read_excel(contabilidade_file, engine='openpyxl')
+    # Assumindo que a aba correta no extrato é a primeira, ou especifique com sheet_name='NomeDaAba'
+    df_extrato = pd.read_excel(extrato_file, engine='openpyxl')
 
-    df_contabil['Saldo_Final'] = pd.to_numeric(
-        df_contabil['Saldo_Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
-        errors='coerce'
-    )
-    
-    def extrair_conta_chave_report(texto_conta):
-        match = re.search(r'\d{7,}', str(texto_conta))
-        return int(match.group(0)) if match else None
+    # Renomeia as colunas para um padrão consistente
+    df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
+    df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
 
-    df_contabil['Conta_Chave'] = df_contabil['Domicilio_Bancario'].apply(extrair_conta_chave_report)
-    df_contabil.dropna(subset=['Conta_Chave'], inplace=True)
-    df_contabil['Conta_Chave'] = df_contabil['Conta_Chave'].astype(int)
+    # Converte colunas de saldo para numérico, tratando erros e valores nulos
+    for df in [df_contabil, df_extrato]:
+        for col in df.columns:
+            if 'Saldo' in col:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-    df_movimento_contabil = df_contabil[df_contabil['Conta_Contabil'].str.contains('111111901', na=False)]
-    df_movimento_contabil = df_movimento_contabil.groupby('Conta_Chave')['Saldo_Final'].sum().reset_index()
-    df_movimento_contabil.rename(columns={'Saldo_Final': 'Saldo_Contabil_Movimento'}, inplace=True)
-
-    df_aplicacao_contabil = df_contabil[df_contabil['Conta_Contabil'].str.contains('111115001', na=False)]
-    df_aplicacao_contabil = df_aplicacao_contabil.groupby('Conta_Chave')['Saldo_Final'].sum().reset_index()
-    df_aplicacao_contabil.rename(columns={'Saldo_Final': 'Saldo_Contabil_Aplicacao'}, inplace=True)
-
-    df_report_pivot = pd.merge(df_movimento_contabil, df_aplicacao_contabil, on='Conta_Chave', how='outer')
-    mapa_domicilio = df_contabil[['Conta_Chave', 'Domicilio_Bancario']].drop_duplicates().set_index('Conta_Chave')
-
-    # Leitor robusto para o arquivo de extrato
-    colunas_extrato = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado', 'Vazio']
-    df_extrato = pd.read_csv(
-        extrato_file, sep=',', encoding='latin-1', quotechar='"', skiprows=1, header=None, names=colunas_extrato, on_bad_lines='skip'
-    )
-    
-    for col in ['Saldo_Corrente', 'Saldo_Aplicado']:
-        df_extrato[col] = pd.to_numeric(
-            df_extrato[col].astype(str).str.replace(',', '', regex=False),
-            errors='coerce'
-        ).fillna(0)
-    df_extrato.rename(columns={'Saldo_Corrente': 'Saldo_Extrato_Movimento', 'Saldo_Aplicado': 'Saldo_Extrato_Aplicacao'}, inplace=True)
-
+    # --- Lógica de Junção e Reestruturação ---
     def extrair_chave(texto_conta):
-        try: return int(re.sub(r'\D', '', str(texto_conta)))
-        except (ValueError, IndexError): return None
+        try:
+            return int(re.sub(r'\D', '', str(texto_conta)))
+        except (ValueError, IndexError):
+            return None
             
+    df_contabil['Conta_Chave'] = df_contabil['Conta'].apply(extrair_chave)
     df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_chave)
-    df_extrato.dropna(subset=['Conta_Chave'], inplace=True)
-    df_extrato['Conta_Chave'] = df_extrato['Conta_Chave'].astype(int)
+    
+    for df in [df_contabil, df_extrato]:
+        df.dropna(subset=['Conta_Chave'], inplace=True)
+        df['Conta_Chave'] = df['Conta_Chave'].astype(int)
 
-    df_extrato_pivot = df_extrato.groupby('Conta_Chave')[['Saldo_Extrato_Movimento', 'Saldo_Aplicado_Extrato']].sum().reset_index()
+    # Prepara os dataframes para a junção, agrupando para evitar duplicatas
+    df_contabil_pivot = df_contabil.groupby('Conta_Chave').agg({
+        'Titular': 'first',
+        'Saldo_Corrente_Contabil': 'sum',
+        'Saldo_Aplicado_Contabil': 'sum'
+    }).reset_index()
 
-    df_final = pd.merge(df_report_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
+    df_extrato_pivot = df_extrato.groupby('Conta_Chave')[['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']].sum().reset_index()
+
+    # Consolidação e Reestruturação Final
+    df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
     df_final.fillna(0, inplace=True)
-    df_final = df_final.join(mapa_domicilio, on='Conta_Chave')
-    df_final.dropna(subset=['Domicilio_Bancario'], inplace=True)
+    df_final.rename(columns={'Titular': 'Domicilio_Bancario'}, inplace=True)
+    df_final['Domicilio_Bancario'].fillna('Conta sem descrição no arquivo contábil', inplace=True)
 
-    df_final['Diferenca_Movimento'] = df_final['Saldo_Contabil_Movimento'] - df_final['Saldo_Extrato_Movimento']
-    df_final['Diferenca_Aplicacao'] = df_final['Saldo_Contabil_Aplicacao'] - df_final['Saldo_Extrato_Aplicacao']
+    df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
+    df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
     
     df_final = df_final.set_index('Domicilio_Bancario')
     df_final = df_final[[
-        'Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento',
-        'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao'
+        'Saldo_Corrente_Contabil', 'Saldo_Corrente_Extrato', 'Diferenca_Movimento',
+        'Saldo_Aplicado_Contabil', 'Saldo_Aplicado_Extrato', 'Diferenca_Aplicacao'
     ]]
     
     df_final.columns = pd.MultiIndex.from_tuples([
@@ -147,8 +128,9 @@ st.set_page_config(page_title="Conciliação Bancária", layout="wide")
 st.title("Ferramenta de Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
-contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV)", type=['csv'])
-extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV)", type=['csv'])
+# MUDANÇA: Alterado o tipo de arquivo para aceitar Excel e atualizado o rótulo
+contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (XLSX)", type=['xlsx', 'xls'])
+extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (XLSX)", type=['xlsx', 'xls'])
 
 st.sidebar.header("2. Processar")
 if contabilidade and extrato:
@@ -161,7 +143,7 @@ if contabilidade and extrato:
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
 else:
-    st.sidebar.warning("Por favor, carregue os dois arquivos.")
+    st.sidebar.warning("Por favor, carregue os dois arquivos Excel.")
 
 if 'df_resultado' in st.session_state:
     df_final_formatado = st.session_state['df_resultado']
@@ -178,12 +160,7 @@ if 'df_resultado' in st.session_state:
         else:
             st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
             formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
-            
-            # MUDANÇA: Invertida a ordem de .map() e .format() para corrigir o erro
-            st.dataframe(df_para_mostrar.style
-                .map(lambda x: 'color: red' if x < 0 else None, subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')])
-                .format(formatter=formatters)
-            )
+            st.dataframe(df_para_mostrar.style.format(formatter=formatters).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')]))
 
         st.header("Download do Relatório Completo")
         st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
