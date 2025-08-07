@@ -2,89 +2,54 @@ import streamlit as st
 import pandas as pd
 import re
 import io
-import csv
 import numpy as np
 from fpdf import FPDF
 from datetime import datetime
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
 def realizar_conciliacao(contabilidade_file, extrato_file):
-    # --- Processamento do Relatório Contábil (contabilidade) ---
-    df_report = pd.read_csv(contabilidade_file, sep=';', encoding='latin-1', header=0)
+    # --- Processamento do Relatório Contábil (agora simplificado) ---
+    df_contabil = pd.read_csv(contabilidade_file, sep=';', encoding='latin-1')
+    df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
     
-    if len(df_report.columns) >= 8:
-        df_report = df_report.iloc[:, :8]
-        df_report.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
-    elif len(df_report.columns) >= 5:
-        df_report = df_report.iloc[:, :5]
-        df_report.columns = ['Unidade_Gestora', 'Domicilio_Bancario', 'Conta_Contabil', 'Conta_Corrente', 'Saldo_Final']
+    # --- Processamento do Extrato Consolidado (agora simplificado) ---
+    df_extrato = pd.read_csv(extrato_file, sep=';', encoding='latin-1')
+    df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
 
-    df_report['Saldo_Final'] = pd.to_numeric(
-        df_report['Saldo_Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
-        errors='coerce'
-    )
+    # --- Limpeza e Preparação de Ambos os Arquivos ---
+    dataframes = {'contabil': df_contabil, 'extrato': df_extrato}
+    for nome, df in dataframes.items():
+        # Limpar a coluna 'Conta' para criar a chave de ligação
+        df['Conta_Chave'] = df['Conta'].astype(str).apply(lambda x: re.sub(r'\D', '', x))
+        df.dropna(subset=['Conta_Chave'], inplace=True)
+        df = df[df['Conta_Chave'] != '']
+        df['Conta_Chave'] = df['Conta_Chave'].astype(int)
+        
+        # Limpar colunas de saldo
+        sufixo = '_Contabil' if nome == 'contabil' else '_Extrato'
+        colunas_saldo = [f'Saldo_Corrente{sufixo}', f'Saldo_Aplicado{sufixo}']
+        for col in colunas_saldo:
+            if col in df.columns:
+                df[col] = pd.to_numeric(
+                    df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
+                    errors='coerce'
+                ).fillna(0)
     
-    def extrair_conta_chave_report(texto_conta):
-        match = re.search(r'\d{7,}', str(texto_conta))
-        return int(match.group(0)) if match else None
-
-    df_report['Conta_Chave'] = df_report['Domicilio_Bancario'].apply(extrair_conta_chave_report)
-    df_report.dropna(subset=['Conta_Chave'], inplace=True)
-    df_report['Conta_Chave'] = df_report['Conta_Chave'].astype(int)
-
-    df_movimento_contabil = df_report[df_report['Conta_Contabil'].str.contains('111111901', na=False)]
-    df_movimento_contabil = df_movimento_contabil.groupby('Conta_Chave')['Saldo_Final'].sum().reset_index()
-    df_movimento_contabil.rename(columns={'Saldo_Final': 'Saldo_Contabil_Movimento'}, inplace=True)
-
-    df_aplicacao_contabil = df_report[df_report['Conta_Contabil'].str.contains('111115001', na=False)]
-    df_aplicacao_contabil = df_aplicacao_contabil.groupby('Conta_Chave')['Saldo_Final'].sum().reset_index()
-    df_aplicacao_contabil.rename(columns={'Saldo_Final': 'Saldo_Contabil_Aplicacao'}, inplace=True)
-
-    df_report_pivot = pd.merge(df_movimento_contabil, df_aplicacao_contabil, on='Conta_Chave', how='outer')
-    mapa_domicilio = df_report[['Conta_Chave', 'Domicilio_Bancario']].drop_duplicates().set_index('Conta_Chave')
-
-    # --- Processamento do Extrato Consolidado (extrato) ---
-    colunas_extrato = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado', 'Vazio']
-    df_extrato = pd.read_csv(
-        extrato_file, sep=',', encoding='latin-1', quotechar='"', skiprows=1, header=None, names=colunas_extrato, on_bad_lines='skip'
-    )
-    
-    # MUDANÇA DEFINITIVA: Lógica de limpeza de número corrigida para o formato americano (virgula de milhar)
-    colunas_saldo_extrato = ['Saldo_Corrente', 'Saldo_Aplicado']
-    for col in colunas_saldo_extrato:
-        df_extrato[col] = pd.to_numeric(
-            df_extrato[col].astype(str).str.replace(',', '', regex=False), # Apenas remove a vírgula de milhar
-            errors='coerce'
-        ).fillna(0)
-    df_extrato.rename(columns={'Saldo_Corrente': 'Saldo_Extrato_Movimento', 'Saldo_Aplicado': 'Saldo_Extrato_Aplicacao'}, inplace=True)
-
-    def extrair_conta_chave_extrato(texto_conta):
-        try:
-            numeros = re.sub(r'\D', '', str(texto_conta))
-            return int(numeros) if numeros else None
-        except (ValueError, IndexError):
-            return None
-            
-    df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_conta_chave_extrato)
-    
-    df_extrato_pivot = df_extrato[['Conta_Chave', 'Saldo_Extrato_Movimento', 'Saldo_Extrato_Aplicacao']].dropna(subset=['Conta_Chave'])
-    df_extrato_pivot['Conta_Chave'] = df_extrato_pivot['Conta_Chave'].astype(int)
-    df_extrato_pivot = df_extrato_pivot.groupby('Conta_Chave').sum().reset_index()
-
     # --- Consolidação e Reestruturação Final ---
-    df_final = pd.merge(df_report_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
+    df_contabil_pivot = df_contabil[['Conta_Chave', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
+    df_extrato_pivot = df_extrato[['Conta_Chave', 'Conta', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']]
+    
+    df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
     df_final.fillna(0, inplace=True)
-    df_final = df_final.join(mapa_domicilio, on='Conta_Chave')
-    df_final.dropna(subset=['Domicilio_Bancario'], inplace=True)
-    df_final = df_final[df_final['Conta_Chave'] != 0]
-
-    df_final['Diferenca_Movimento'] = df_final['Saldo_Contabil_Movimento'] - df_final['Saldo_Extrato_Movimento']
-    df_final['Diferenca_Aplicacao'] = df_final['Saldo_Contabil_Aplicacao'] - df_final['Saldo_Extrato_Aplicacao']
+    df_final.rename(columns={'Conta': 'Domicilio_Bancario'}, inplace=True)
+    
+    df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
+    df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
     
     df_final = df_final.set_index('Domicilio_Bancario')
     df_final = df_final[[
-        'Saldo_Contabil_Movimento', 'Saldo_Extrato_Movimento', 'Diferenca_Movimento',
-        'Saldo_Contabil_Aplicacao', 'Saldo_Extrato_Aplicacao', 'Diferenca_Aplicacao'
+        'Saldo_Corrente_Contabil', 'Saldo_Corrente_Extrato', 'Diferenca_Movimento',
+        'Saldo_Aplicado_Contabil', 'Saldo_Aplicado_Extrato', 'Diferenca_Aplicacao'
     ]]
     
     df_final.columns = pd.MultiIndex.from_tuples([
@@ -154,8 +119,8 @@ st.set_page_config(page_title="Conciliação Bancária", layout="wide")
 st.title("Ferramenta de Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
-contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV)", type=['csv'])
-extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV)", type=['csv'])
+contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV ajustado)", type=['csv'])
+extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV ajustado)", type=['csv'])
 
 st.sidebar.header("2. Processar")
 if contabilidade and extrato:
@@ -168,7 +133,7 @@ if contabilidade and extrato:
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
 else:
-    st.sidebar.warning("Por favor, carregue o relatório e o extrato consolidado.")
+    st.sidebar.warning("Por favor, carregue os dois arquivos ajustados.")
 
 if 'df_resultado' in st.session_state:
     df_final_formatado = st.session_state['df_resultado']
