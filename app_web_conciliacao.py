@@ -8,16 +8,17 @@ from fpdf import FPDF
 from datetime import datetime
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
-def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
+def realizar_conciliacao(contabilidade_file, extrato_file):
     # --- Processamento do Relatório Contábil (contabilidade) ---
-    df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1', header=0, skiprows=[1])
-    df_report.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
-    
-    colunas_numericas_report = ["Saldo_Final"]
-    for col in colunas_numericas_report:
-        if col in df_report.columns:
-            df_report[col] = df_report[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-            df_report[col] = pd.to_numeric(df_report[col], errors='coerce')
+    # MUDANÇA DEFINITIVA: Lógica de leitura e limpeza refeita para ser 100% compatível com o arquivo fornecido.
+    df_report = pd.read_csv(contabilidade_file, sep=';', encoding='latin-1', header=0)
+    # Renomeia as colunas baseado na estrutura real do arquivo "Saldos_Bancarios_Limpo.csv"
+    df_report.columns = ['Unidade_Gestora', 'Domicilio_Bancario', 'Conta_Contabil', 'Conta_Corrente', 'Saldo_Final']
+
+    df_report['Saldo_Final'] = pd.to_numeric(
+        df_report['Saldo_Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
+        errors='coerce'
+    )
     
     def extrair_conta_chave_report(texto_conta):
         match = re.search(r'\d{7,}', str(texto_conta))
@@ -39,22 +40,15 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     mapa_domicilio = df_report[['Conta_Chave', 'Domicilio_Bancario']].drop_duplicates().set_index('Conta_Chave')
 
     # --- Processamento do Extrato Consolidado (extrato) ---
-    # MUDANÇA FINAL: Leitor robusto que ignora o cabeçalho e força os nomes das colunas.
     colunas_extrato = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente', 'Saldo_Invest', 'Saldo_Aplicado', 'Vazio']
-    df_extrato = pd.read_csv(
-        arquivo_extrato_consolidado, 
-        sep=',', 
-        encoding='latin-1', 
-        quotechar='"',
-        skiprows=1, # Pula o cabeçalho problemático
-        header=None, # Informa que não há cabeçalho a ser lido
-        names=colunas_extrato # Força os nomes corretos para as colunas
-    )
+    df_extrato = pd.read_csv(extrato_file, sep=',', encoding='latin-1', quotechar='"', skiprows=1, header=None, names=colunas_extrato)
     
     colunas_saldo_extrato = ['Saldo_Corrente', 'Saldo_Aplicado']
     for col in colunas_saldo_extrato:
-        df_extrato[col] = df_extrato[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-        df_extrato[col] = pd.to_numeric(df_extrato[col], errors='coerce').fillna(0)
+        df_extrato[col] = pd.to_numeric(
+            df_extrato[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
+            errors='coerce'
+        ).fillna(0)
     df_extrato.rename(columns={'Saldo_Corrente': 'Saldo_Extrato_Movimento', 'Saldo_Aplicado': 'Saldo_Extrato_Aplicacao'}, inplace=True)
 
     def extrair_conta_chave_extrato(texto_conta):
@@ -153,7 +147,7 @@ st.set_page_config(page_title="Conciliação Bancária", layout="wide")
 st.title("Ferramenta de Conciliação de Saldos Bancários")
 
 st.sidebar.header("1. Carregar Arquivos")
-contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV Original)", type=['csv'])
+contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV)", type=['csv'])
 extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV)", type=['csv'])
 
 st.sidebar.header("2. Processar")
