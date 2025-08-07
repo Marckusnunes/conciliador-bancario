@@ -97,4 +97,109 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     
     df_final.columns = pd.MultiIndex.from_tuples([
         ('Conta Movimento', 'Saldo Contábil'), ('Conta Movimento', 'Saldo Extrato'), ('Conta Movimento', 'Diferença'),
-        ('Aplicação Financeira', 'Saldo Contábil'), ('Aplicação Financeira', 'Saldo Extrato'), ('Aplicação Financeira', 'Difer
+        ('Aplicação Financeira', 'Saldo Contábil'), ('Aplicação Financeira', 'Saldo Extrato'), ('Aplicação Financeira', 'Diferença')
+    ], names=['Grupo', 'Item'])
+    
+    return df_final
+
+# --- Bloco 2: Funções para Geração de Arquivos ---
+@st.cache_data
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=True, sheet_name='Conciliacao_Consolidada')
+    return output.getvalue()
+
+class PDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 10)
+        self.cell(0, 10, 'Relatório de Conciliação Consolidado por Conta', 0, 1, 'C')
+        self.ln(5)
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
+    def create_table(self, data):
+        self.set_font('Arial', '', 7)
+        line_height = self.font_size * 2.5
+        col_width = 30 
+        
+        self.set_font('Arial', 'B', 8)
+        index_name = data.index.name if data.index.name else 'ID'
+        self.cell(55, line_height, index_name, 1, 0, 'C')
+        self.cell(col_width * 3, line_height, 'Conta Movimento', 1, 0, 'C')
+        self.cell(col_width * 3, line_height, 'Aplicação Financeira', 1, 0, 'C')
+        self.ln(line_height)
+        
+        self.set_font('Arial', 'B', 7)
+        self.cell(55, line_height, '', 1, 0, 'C')
+        sub_headers = ['Saldo Contábil', 'Saldo Extrato', 'Diferença']
+        for _ in range(2):
+            for sub_header in sub_headers:
+                self.cell(col_width, line_height, sub_header, 1, 0, 'C')
+        self.ln(line_height)
+
+        self.set_font('Arial', '', 6)
+        formatted_data = data.copy()
+        for col_tuple in formatted_data.columns:
+             formatted_data[col_tuple] = formatted_data[col_tuple].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
+
+        for index, row in formatted_data.iterrows():
+            display_index = (index[:35] + '...') if len(str(index)) > 35 else index
+            self.cell(55, line_height, str(display_index), 1, 0, 'L')
+            for item in row:
+                self.cell(col_width, line_height, str(item), 1, 0, 'R')
+            self.ln(line_height)
+
+def create_pdf(df):
+    pdf = PDF('L', 'mm', 'A4')
+    pdf.add_page()
+    pdf.create_table(df)
+    return bytes(pdf.output())
+
+# --- Bloco 3: Interface Web com Streamlit ---
+st.set_page_config(page_title="Conciliação Bancária", layout="wide")
+st.title("Ferramenta de Conciliação de Saldos Bancários")
+
+st.sidebar.header("1. Carregar Arquivos")
+contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV Original)", type=['csv'])
+extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (CSV)", type=['csv'])
+
+st.sidebar.header("2. Processar")
+if contabilidade and extrato:
+    if st.sidebar.button("Conciliar Agora"):
+        with st.spinner("Processando..."):
+            try:
+                df_resultado_formatado = realizar_conciliacao(contabilidade, extrato)
+                st.success("Conciliação Concluída com Sucesso!")
+                st.session_state['df_resultado'] = df_resultado_formatado
+            except Exception as e:
+                st.error(f"Ocorreu um erro durante o processamento: {e}")
+else:
+    st.sidebar.warning("Por favor, carregue o relatório e o extrato consolidado.")
+
+if 'df_resultado' in st.session_state:
+    df_final_formatado = st.session_state['df_resultado']
+    st.header("Resultado da Conciliação Consolidada")
+    
+    df_para_mostrar = df_final_formatado[
+        (df_final_formatado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
+        (df_final_formatado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
+    ].copy()
+    
+    if df_para_mostrar.empty:
+        st.success("Ótima notícia! Nenhuma divergência encontrada.")
+    else:
+        st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
+        formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
+        st.dataframe(df_para_mostrar.style.format(formatter=formatters).map(lambda x: 'color: red' if x < 0 else 'color: black', subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')]))
+
+    st.header("Download do Relatório Completo")
+    st.write("Os arquivos para download contêm todas as contas, incluindo as que não apresentaram divergência.")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.download_button("Baixar em CSV", df_final_formatado.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
+    with col2:
+        st.download_button("Baixar em Excel", to_excel(df_final_formatado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    with col3:
+        st.download_button("Baixar em PDF", create_pdf(df_final_formatado), 'relatorio_consolidado.pdf', 'application/pdf')
