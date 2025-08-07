@@ -9,23 +9,13 @@ from datetime import datetime
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
 def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
-    # --- Processamento do Relatório Contábil (AGORA COM LEITOR MANUAL) ---
-    dados_relatorio = []
-    stringio_report = io.StringIO(arquivo_relatorio.getvalue().decode('latin-1'))
-    reader_report = csv.reader(stringio_report, delimiter=';')
+    # --- Processamento do Relatório Contábil ---
+    df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1')
+    if "Unidade Gestora" in df_report.columns[0]:
+        df_report.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
+        if "Unidade Gestora" in df_report.iloc[0].to_string():
+            df_report = df_report.drop(df_report.index[0])
     
-    # Pula o cabeçalho original
-    header_report = next(reader_report, None)
-    
-    for row in reader_report:
-        # Garante que a linha tenha o número esperado de colunas para ser válida
-        if len(row) >= 8:
-            dados_relatorio.append(row[:8])
-
-    colunas_report = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
-    df_report = pd.DataFrame(dados_relatorio, columns=colunas_report)
-
-    # O restante da lógica de processamento do relatório permanece
     colunas_numericas_report = ["Saldo_Final"]
     for col in colunas_numericas_report:
         if col in df_report.columns:
@@ -51,12 +41,12 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     df_report_pivot = pd.merge(df_movimento_contabil, df_aplicacao_contabil, on='Conta_Chave', how='outer')
     mapa_domicilio = df_report[['Conta_Chave', 'Domicilio_Bancario']].drop_duplicates().set_index('Conta_Chave')
 
-    # --- Processamento do Extrato Consolidado (com leitor manual já implementado) ---
+    # --- Processamento do Extrato Consolidado ---
     dados_extrato = []
-    stringio_extrato = io.StringIO(arquivo_extrato_consolidado.getvalue().decode('latin-1'))
-    next(stringio_extrato)
-    reader_extrato = csv.reader(stringio_extrato, quotechar='"', delimiter=',')
-    for row in reader_extrato:
+    stringio = io.StringIO(arquivo_extrato_consolidado.getvalue().decode('latin-1'))
+    next(stringio)
+    reader = csv.reader(stringio, quotechar='"', delimiter=',')
+    for row in reader:
         if len(row) >= 6:
             dados_extrato.append(row[:6])
 
