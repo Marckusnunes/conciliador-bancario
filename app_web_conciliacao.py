@@ -2,9 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import io
-import csv
 import numpy as np
-from fpdf import FPDF
 from datetime import datetime
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
@@ -12,24 +10,30 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     # --- Processamento do Relatório Contábil ---
     df_report = pd.read_csv(arquivo_relatorio, sep=';', encoding='latin-1')
     if "Unidade Gestora" in df_report.columns[0]:
-        df_report.columns = ["Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente", "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"]
+        df_report.columns = [
+            "Unidade_Gestora", "Domicilio_Bancario", "Conta_Contabil", "Conta_Corrente",
+            "Saldo_Inicial", "Debito", "Credito", "Saldo_Final"
+        ]
         if "Unidade Gestora" in df_report.iloc[0].to_string():
             df_report = df_report.drop(df_report.index[0])
 
+    # Conversão de valores numéricos
     colunas_numericas_report = ["Saldo_Final"]
     for col in colunas_numericas_report:
         if col in df_report.columns:
             df_report[col] = df_report[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
             df_report[col] = pd.to_numeric(df_report[col], errors='coerce')
 
-    def extrair_conta_chave_report(texto_conta):
-        match = re.search(r'\d{7,}', str(texto_conta))
+    # Extração da conta
+    def extrair_conta_chave(texto):
+        match = re.search(r'\d{7,}', str(texto))
         return int(match.group(0)) if match else None
 
-    df_report['Conta_Chave'] = df_report['Conta_Corrente'].apply(extrair_conta_chave_report)
+    df_report['Conta_Chave'] = df_report['Conta_Corrente'].apply(extrair_conta_chave)
     df_report.dropna(subset=['Conta_Chave'], inplace=True)
     df_report['Conta_Chave'] = df_report['Conta_Chave'].astype(int)
 
+    # Filtrar por tipo de conta contábil
     df_movimento_contabil = df_report[df_report['Conta_Contabil'].str.contains('111111901', na=False)]
     df_movimento_contabil = df_movimento_contabil.groupby('Conta_Chave')['Saldo_Final'].sum().reset_index()
     df_movimento_contabil.rename(columns={'Saldo_Final': 'Saldo_Contabil_Movimento'}, inplace=True)
@@ -42,8 +46,9 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     mapa_domicilio = df_report[['Conta_Chave', 'Domicilio_Bancario']].drop_duplicates().set_index('Conta_Chave')
 
     # --- Processamento do Extrato Consolidado ---
-    df_extrato = pd.read_csv(arquivo_extrato_consolidado, encoding='latin-1', sep=',', quotechar='"')
+    df_extrato = pd.read_csv(arquivo_extrato_consolidado, sep=';', encoding='latin-1')
 
+    df_extrato.rename(columns=lambda x: x.strip(), inplace=True)
     df_extrato.rename(columns={
         'Conta': 'Conta',
         'Saldo Corrente': 'Saldo_Extrato_Movimento',
@@ -51,33 +56,36 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
     }, inplace=True)
 
     for col in ['Saldo_Extrato_Movimento', 'Saldo_Extrato_Aplicacao']:
-        df_extrato[col] = (
-            df_extrato[col]
-            .astype(str)
-            .str.replace('.', '', regex=False)
-            .str.replace(',', '.', regex=False)
-        )
-        df_extrato[col] = pd.to_numeric(df_extrato[col], errors='coerce').fillna(0)
+        if col in df_extrato.columns:
+            df_extrato[col] = (
+                df_extrato[col]
+                .astype(str)
+                .str.replace('.', '', regex=False)
+                .str.replace(',', '.', regex=False)
+            )
+            df_extrato[col] = pd.to_numeric(df_extrato[col], errors='coerce').fillna(0)
+        else:
+            df_extrato[col] = 0  # adiciona coluna se estiver faltando
 
-    def extrair_conta_chave_extrato(texto_conta):
+    # Extrair conta
+    def extrair_conta_extrato(texto):
         try:
-            numeros = re.sub(r'\D', '', str(texto_conta))
+            numeros = re.sub(r'\D', '', str(texto))
             return int(numeros) if numeros else None
         except:
             return None
 
-    df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_conta_chave_extrato)
+    df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_conta_extrato)
+    df_extrato = df_extrato.dropna(subset=['Conta_Chave'])
+    df_extrato['Conta_Chave'] = df_extrato['Conta_Chave'].astype(int)
 
-    df_extrato_pivot = df_extrato[['Conta_Chave', 'Saldo_Extrato_Movimento', 'Saldo_Extrato_Aplicacao']].dropna()
-    df_extrato_pivot['Conta_Chave'] = df_extrato_pivot['Conta_Chave'].astype(int)
-    df_extrato_pivot = df_extrato_pivot.groupby('Conta_Chave').sum().reset_index()
+    df_extrato_pivot = df_extrato.groupby('Conta_Chave')[['Saldo_Extrato_Movimento', 'Saldo_Extrato_Aplicacao']].sum().reset_index()
 
-    # --- Consolidação e Reestruturação Final ---
+    # --- Consolidação ---
     df_final = pd.merge(df_report_pivot, df_extrato_pivot, on='Conta_Chave', how='outer')
     df_final.fillna(0, inplace=True)
     df_final = df_final.join(mapa_domicilio, on='Conta_Chave')
     df_final['Domicilio_Bancario'].fillna('Não encontrado no relatório', inplace=True)
-    df_final = df_final[df_final['Conta_Chave'] != 0]
 
     df_final['Diferenca_Movimento'] = df_final['Saldo_Contabil_Movimento'] - df_final['Saldo_Extrato_Movimento']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Contabil_Aplicacao'] - df_final['Saldo_Extrato_Aplicacao']
@@ -132,4 +140,3 @@ if relatorio and extrato:
         st.error(f"Ocorreu um erro ao processar os arquivos: {e}")
 else:
     st.info("Aguardando upload dos dois arquivos para iniciar a conciliação.")
-
