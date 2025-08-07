@@ -95,6 +95,41 @@ def realizar_conciliacao(arquivo_relatorio, arquivo_extrato_consolidado):
 
     return df_final
 
-# Bloco 2 e 3 permanecem inalterados
-# (to_excel, PDF, Streamlit interface)
-# Copie o restante da interface e funções normalmente, pois não há alteração nesses trechos
+# --- Bloco 2: Exportação para Excel ---
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name='Conciliação')
+    output.seek(0)
+    return output
+
+# --- Bloco 3: Interface Streamlit ---
+st.set_page_config(page_title="Conciliação Bancária", layout="wide")
+st.title("Conciliação Bancária")
+
+st.markdown("Faça o upload dos dois arquivos CSV: **Relatório Contábil** e **Extrato Bancário Consolidado**")
+
+col1, col2 = st.columns(2)
+with col1:
+    relatorio = st.file_uploader("Upload do Relatório Contábil (.csv)", type=["csv"])
+with col2:
+    extrato = st.file_uploader("Upload do Extrato Bancário Consolidado (.csv)", type=["csv"])
+
+if relatorio and extrato:
+    try:
+        resultado_df = realizar_conciliacao(relatorio, extrato)
+        st.subheader("Resultado da Conciliação")
+        st.dataframe(resultado_df, use_container_width=True)
+
+        excel_data = to_excel(resultado_df)
+        st.download_button(
+            label="📥 Baixar resultado em Excel",
+            data=excel_data,
+            file_name="conciliacao_bancaria.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        st.error(f"Ocorreu um erro ao processar os arquivos: {e}")
+else:
+    st.info("Aguardando upload dos dois arquivos para iniciar a conciliação.")
+
