@@ -9,7 +9,7 @@ from datetime import datetime
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
-# --- Bloco 1: Funções de Processamento ---
+# --- Bloco 1: Lógica Principal da Conciliação ---
 
 def processar_relatorio_bruto(arquivo_bruto_contabil):
     df = pd.DataFrame()
@@ -90,24 +90,25 @@ def processar_extrato_bb(caminho_arquivo):
     return df
 
 def processar_extrato_cef_bruto(caminho_arquivo):
-    """
-    MUDANÇA: Lê o arquivo .cef da Caixa como um CSV com separador ';', pulando o cabeçalho.
-    """
-    colunas = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Saldo_Total', 'Vazio']
-    df = pd.read_csv(caminho_arquivo, sep=';', encoding='latin-1', skiprows=13, header=None, names=colunas)
-    
-    # Limpa os saldos e converte para número
+    col_specs = [(22, 45), (45, 85), (120, 137), (168, 185)]
+    names = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']
+    df = pd.read_fwf(caminho_arquivo, colspecs=col_specs, names=names, skiprows=4, encoding='latin-1')
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
-        df[col] = df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        df[col] = df[col].astype(str).str.replace(r'[CD]$', '', regex=True).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    
-    if 'Agencia' not in df.columns: df['Agencia'] = '4064' # Valor padrão para CEF
+    if 'Agencia' not in df.columns: df['Agencia'] = '4064'
     return df
 
 def realizar_conciliacao(df_contabil_limpo, df_extrato_unificado):
+    # MUDANÇA: Função de extração de chave mais segura contra números gigantes
     def extrair_chave(texto_conta):
-        try: return int(re.sub(r'\D', '', str(texto_conta)))
-        except (ValueError, IndexError, OverflowError): return None
+        try:
+            numeros = re.sub(r'\D', '', str(texto_conta))
+            if not numeros or len(numeros) > 18: # Ignora chaves vazias ou longas demais
+                return None
+            return int(numeros)
+        except (ValueError, IndexError, OverflowError):
+            return None
             
     df_contabil_limpo['Conta_Chave'] = df_contabil_limpo['Conta'].apply(extrair_chave)
     df_extrato_unificado['Conta_Chave'] = df_extrato_unificado['Conta'].apply(extrair_chave)
