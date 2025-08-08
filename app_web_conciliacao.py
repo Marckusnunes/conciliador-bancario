@@ -124,7 +124,7 @@ def create_pdf(df):
 
 # --- Bloco 3: Interface Web com Streamlit ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide", page_icon="🏦")
-st.title("🏦 Prefeitura da Cidade do Rio de Janeiro")
+st.title("Prefeitura da Cidade do Rio de Janeiro")
 st.header("Controladoria Geral do Município")
 st.markdown("---")
 st.subheader("Conciliação de Saldos Bancários e Contábeis")
