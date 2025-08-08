@@ -220,6 +220,7 @@ if st.sidebar.button("Conciliar Agora"):
                 mes_ano = f"{partes_mes[0]}_{partes_mes[1]}"
                 
                 extratos_encontrados = []
+                df_bb, df_cef = None, None # Inicia como None
                 try:
                     caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.xlsx"
                     df_bb = processar_extrato_bb(caminho_bb)
@@ -228,7 +229,6 @@ if st.sidebar.button("Conciliar Agora"):
                 except FileNotFoundError:
                     st.warning(f"Aviso: Extrato do BB para {st.session_state.mes_selecionado} não encontrado.")
                 
-                # MUDANÇA: Procura pelo arquivo .cef da CEF e usa a função correta
                 try:
                     caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
                     df_cef = processar_extrato_cef_bruto(caminho_cef)
@@ -243,6 +243,11 @@ if st.sidebar.button("Conciliar Agora"):
                 else:
                     df_extrato_unificado = pd.concat(extratos_encontrados, ignore_index=True)
                     df_contabil_limpo = processar_relatorio_bruto(contabilidade_bruto)
+                    
+                    # Salva os dados limpos para a auditoria
+                    st.session_state['audit_contabil'] = df_contabil_limpo
+                    st.session_state['audit_extrato'] = df_extrato_unificado
+
                     df_resultado_final = realizar_conciliacao(df_contabil_limpo, df_extrato_unificado)
                     st.success("Conciliação Concluída com Sucesso!")
                     st.session_state['df_resultado'] = df_resultado_final
@@ -279,3 +284,14 @@ if 'df_resultado' in st.session_state:
                 st.download_button("Baixar em Excel", to_excel(resultado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
             with col3:
                 st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
+        
+        # Seção de auditoria
+        st.markdown("---")
+        with st.expander("Clique aqui para auditar os dados de origem"):
+            st.subheader("Dados Extraídos do Relatório Contábil (Após Limpeza)")
+            if 'audit_contabil' in st.session_state:
+                st.dataframe(st.session_state['audit_contabil'])
+            
+            st.subheader("Dados Extraídos dos Extratos Bancários (Após Limpeza e Unificação)")
+            if 'audit_extrato' in st.session_state:
+                st.dataframe(st.session_state['audit_extrato'])
