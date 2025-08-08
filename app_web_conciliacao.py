@@ -9,22 +9,20 @@ from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
-def realizar_conciliacao(contabilidade_file, extrato_file_path):
-    # --- Processamento do Relatório Contábil (contabilidade) ---
-    df_contabil = pd.read_excel(contabilidade_file, engine='openpyxl')
-    # Lógica robusta para lidar com 6 ou 7 colunas no arquivo da contabilidade
-    if len(df_contabil.columns) == 7:
-        df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil', 'Vazio']
-        df_contabil = df_contabil.drop(columns=['Vazio'])
-    else:
-        df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
+def realizar_conciliacao(contabilidade_file, extrato_file):
+    # --- Processamento do Relatório Contábil (CSV) ---
+    # MUDANÇA: Lê o arquivo da contabilidade como CSV, separado por ponto e vírgula.
+    df_contabil = pd.read_csv(contabilidade_file, sep=';', encoding='latin-1')
+    df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
     
     for col in ['Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']:
-        df_contabil[col] = pd.to_numeric(df_contabil[col], errors='coerce').fillna(0)
+        df_contabil[col] = pd.to_numeric(
+            df_contabil[col].astype(str).str.replace(',', '.', regex=False),
+            errors='coerce'
+        ).fillna(0)
 
-    # --- Processamento do Extrato Consolidado (extrato) ---
-    df_extrato = pd.read_excel(extrato_file_path, engine='openpyxl', sheet_name='Table 1')
-    
+    # --- Processamento do Extrato Consolidado (Excel) ---
+    df_extrato = pd.read_excel(extrato_file, engine='openpyxl', sheet_name='Table 1')
     # Lógica robusta para lidar com 6 ou 7 colunas no extrato
     if len(df_extrato.columns) == 7:
         df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Vazio']
@@ -74,29 +72,7 @@ def realizar_conciliacao(contabilidade_file, extrato_file_path):
 def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=True, sheet_name='Conciliacao', startrow=1)
-        workbook = writer.book; worksheet = writer.sheets['Conciliacao']
-        font_header = Font(bold=True, color="FFFFFF"); align_header = Alignment(horizontal='center', vertical='center')
-        fill_header = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
-        border_thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        number_format_br = '#,##0.00'
-        worksheet.merge_cells('B1:D1'); cell_movimento = worksheet['B1']; cell_movimento.value = 'Conta Movimento'
-        cell_movimento.font = font_header; cell_movimento.alignment = align_header; cell_movimento.fill = fill_header
-        worksheet.merge_cells('E1:G1'); cell_aplicacao = worksheet['E1']; cell_aplicacao.value = 'Aplicação Financeira'
-        cell_aplicacao.font = font_header; cell_aplicacao.alignment = align_header; cell_aplicacao.fill = fill_header
-        for row in worksheet['A2:G2']:
-            for cell in row: cell.font = Font(bold=True); cell.alignment = Alignment(horizontal='center', vertical='center')
-        for col_idx, col in enumerate(worksheet.columns, 1):
-            max_length = 0; column_letter = get_column_letter(col_idx)
-            for cell_idx, cell in enumerate(col, 0):
-                if cell_idx > 0: cell.border = border_thin
-                if cell_idx > 1:
-                    if col_idx == 1: cell.alignment = Alignment(horizontal='left', vertical='center')
-                    else: cell.number_format = number_format_br; cell.alignment = Alignment(horizontal='right', vertical='center')
-                try:
-                    if len(str(cell.value)) > max_length: max_length = len(str(cell.value))
-                except: pass
-            adjusted_width = (max_length + 2); worksheet.column_dimensions[column_letter].width = adjusted_width
+        df.to_excel(writer, index=True, sheet_name='Conciliacao_Consolidada')
     return output.getvalue()
 
 class PDF(FPDF):
@@ -134,43 +110,29 @@ st.header("Controladoria Geral do Município")
 st.markdown("---")
 st.subheader("Conciliação de Saldos Bancários e Contábeis")
 
-meses = {1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho", 7: "julho", 8: "agosto", 9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro"}
-ano_atual = datetime.now().year
-opcoes_meses_formatadas = [f"{nome.capitalize()} {ano}" for ano in range(ano_atual - 1, ano_atual + 2) for mes, nome in meses.items()]
-try:
-    index_padrao = opcoes_meses_formatadas.index(f"{meses[datetime.now().month].capitalize()} {ano_atual}")
-except ValueError:
-    index_padrao = len(opcoes_meses_formatadas) // 2
+st.sidebar.header("1. Carregar Arquivos")
+# MUDANÇA: O primeiro seletor aceita CSV, o segundo aceita XLSX/XLS
+contabilidade = st.sidebar.file_uploader("Selecione o Relatório Contábil (CSV)", type=['csv'])
+extrato = st.sidebar.file_uploader("Selecione o Extrato Consolidado (XLSX)", type=['xlsx', 'xls'])
 
-st.selectbox("Selecione o Mês da Conciliação:", options=opcoes_meses_formatadas, index=index_padrao, key='mes_selecionado')
-
-st.sidebar.header("Carregar Relatório Contábil")
-contabilidade = st.sidebar.file_uploader(f"Selecione o seu Relatório Contábil de {st.session_state.mes_selecionado}", type=['xlsx', 'xls'])
-
-if st.sidebar.button("Conciliar Agora"):
-    if contabilidade is not None:
+st.sidebar.header("2. Processar")
+if contabilidade and extrato:
+    if st.sidebar.button("Conciliar Agora"):
         with st.spinner("Processando..."):
             try:
-                partes_mes = st.session_state.mes_selecionado.lower().split()
-                nome_extrato_esperado = f"extrato_{partes_mes[0]}_{partes_mes[1]}.xlsx"
-                caminho_extrato = f"extratos_consolidados/{nome_extrato_esperado}"
-
-                df_resultado_formatado = realizar_conciliacao(contabilidade, caminho_extrato)
+                df_resultado_formatado = realizar_conciliacao(contabilidade, extrato)
                 st.success("Conciliação Concluída com Sucesso!")
                 st.session_state['df_resultado'] = df_resultado_formatado
-            except FileNotFoundError:
-                st.error(f"ERRO: O arquivo de extrato para {st.session_state.mes_selecionado} ('{nome_extrato_esperado}') não foi encontrado.")
-                st.error("Por favor, peça ao administrador para carregar o arquivo correto na pasta 'extratos_consolidados' no GitHub.")
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
-    else:
-        st.sidebar.warning("Por favor, carregue o seu arquivo de relatório contábil.")
+else:
+    st.sidebar.warning("Por favor, carregue o arquivo CSV e o arquivo Excel.")
 
 if 'df_resultado' in st.session_state:
     df_final_formatado = st.session_state['df_resultado']
     if df_final_formatado is not None and not df_final_formatado.empty:
         st.markdown("---")
-        st.header(f"Resultado da Conciliação de {st.session_state.mes_selecionado}")
+        st.header("Resultado da Conciliação Consolidada")
         df_para_mostrar = df_final_formatado[
             (df_final_formatado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
             (df_final_formatado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
