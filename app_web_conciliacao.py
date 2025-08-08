@@ -19,7 +19,6 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
         if nome_arquivo.endswith('.xlsx') or nome_arquivo.endswith('.xls'):
             df = pd.read_excel(arquivo_bruto_contabil, engine='openpyxl')
         elif nome_arquivo.endswith('.csv'):
-            # Tenta ler com diferentes separadores
             df = pd.read_csv(arquivo_bruto_contabil, sep=';', encoding='latin-1', on_bad_lines='skip', header=None)
             if len(df.columns) <= 1:
                 arquivo_bruto_contabil.seek(0)
@@ -32,10 +31,8 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
 
     if len(df.columns) >= 8:
         st.info("Detectado arquivo contábil bruto (8 colunas). Aplicando transformação...")
-        # Pula as duas primeiras linhas que são cabeçalhos no arquivo bruto
         if isinstance(df.iloc[0,0], str) and 'Unidade Gestora' in df.iloc[0,0]:
              df = df.iloc[2:].reset_index(drop=True)
-
         df = df.iloc[:,:8]
         df.columns = [
             'Unidade Gestora', 'Domicílio bancário', 'Conta contábil', 'Conta Corrente',
@@ -50,11 +47,9 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
         df_pivot = df.pivot_table(
             index='Domicílio bancário', columns='Conta contábil', values='Saldo Final', aggfunc='sum'
         ).reset_index()
-
         rename_dict = {c: 'Saldo Corrente' for c in df_pivot.columns if '111111901' in c}
         rename_dict.update({c: 'Saldo Aplicado' for c in df_pivot.columns if '111115001' in c})
         df_pivot.rename(columns=rename_dict, inplace=True)
-        
         def formatar_numero_conta(texto_conta):
             if not isinstance(texto_conta, str): return ""
             try:
@@ -63,9 +58,7 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
                 principal, verificador = num_sem_zeros[:-1], num_sem_zeros[-1]
                 return f"{int(principal):,}".replace(',', '.') + f"-{verificador}"
             except: return texto_conta
-
         partes_domicilio = df_pivot['Domicílio bancário'].str.split(' - ', expand=True)
-        
         df_final = pd.DataFrame()
         df_final['Agencia'] = partes_domicilio.get(1)
         df_final['Conta'] = partes_domicilio.get(2).apply(formatar_numero_conta)
@@ -74,7 +67,6 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
         df_final['Saldo_Aplicado_Contabil'] = df_pivot.get('Saldo Aplicado')
         df_final.fillna(0, inplace=True)
         return df_final
-
     elif len(df.columns) >= 5:
         st.info("Detectado arquivo contábil ajustado (5/6 colunas).")
         df = df.iloc[:,:6]
@@ -82,7 +74,6 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
         for col in ['Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
-    
     else:
         st.error("Formato do arquivo contábil não reconhecido.")
         return pd.DataFrame()
@@ -219,7 +210,6 @@ except ValueError:
 st.selectbox("Selecione o Mês da Conciliação:", options=opcoes_meses_formatadas, index=index_padrao, key='mes_selecionado')
 
 st.sidebar.header("Carregar Relatório Contábil")
-# MUDANÇA: Seletor de arquivo agora aceita CSV e Excel
 contabilidade_bruto = st.sidebar.file_uploader(f"Selecione o seu Relatório Contábil de {st.session_state.mes_selecionado}", type=['csv', 'xlsx', 'xls'])
 
 if st.sidebar.button("Conciliar Agora"):
@@ -230,7 +220,7 @@ if st.sidebar.button("Conciliar Agora"):
                 mes_ano = f"{partes_mes[0]}_{partes_mes[1]}"
                 
                 extratos_encontrados = []
-                df_bb, df_cef = None, None
+                df_bb, df_cef = None, None # Inicia como None
                 try:
                     caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.xlsx"
                     df_bb = processar_extrato_bb(caminho_bb)
@@ -254,10 +244,9 @@ if st.sidebar.button("Conciliar Agora"):
                     df_extrato_unificado = pd.concat(extratos_encontrados, ignore_index=True)
                     df_contabil_limpo = processar_relatorio_bruto(contabilidade_bruto)
                     
+                    # Salva os dados limpos para a auditoria
                     st.session_state['audit_contabil'] = df_contabil_limpo
                     st.session_state['audit_extrato'] = df_extrato_unificado
-                    st.session_state['audit_bb'] = df_bb
-                    st.session_state['audit_cef'] = df_cef
 
                     df_resultado_final = realizar_conciliacao(df_contabil_limpo, df_extrato_unificado)
                     st.success("Conciliação Concluída com Sucesso!")
@@ -285,7 +274,7 @@ if 'df_resultado' in st.session_state:
                 st.success("✅ Ótima notícia! Nenhuma divergência encontrada.")
             else:
                 st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-                formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in resultado.columns}
+                formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
                 st.dataframe(df_para_mostrar.style.format(formatter=formatters))
             st.header("Download do Relatório Completo")
             col1, col2, col3 = st.columns(3)
@@ -295,13 +284,15 @@ if 'df_resultado' in st.session_state:
                 st.download_button("Baixar em Excel", to_excel(resultado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
             with col3:
                 st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
-
+        
+        # Seção de auditoria
         st.markdown("---")
         with st.expander("Clique aqui para auditar os dados de origem"):
             st.subheader("Dados Extraídos do Relatório Contábil (Após Limpeza)")
-            if 'audit_contabil' in st.session_state and st.session_state['audit_contabil'] is not None:
+            if 'audit_contabil' in st.session_state:
                 st.dataframe(st.session_state['audit_contabil'])
             
-            st.subheader("Dados Extraídos dos Extratos Bancários (Unificados)")
-            if 'audit_extrato' in st.session_state and st.session_state['audit_extrato'] is not None:
+            st.subheader("Dados Extraídos dos Extratos Bancários (Após Limpeza e Unificação)")
+            if 'audit_extrato' in st.session_state:
                 st.dataframe(st.session_state['audit_extrato'])
+
