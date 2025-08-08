@@ -3,9 +3,6 @@ import pandas as pd
 import re
 import io
 import numpy as np
-import csv
-from fpdf import FPDF
-from datetime import datetime
 
 # --- Bloco 1: Funções de Processamento ---
 
@@ -87,12 +84,14 @@ def processar_extrato_bb(caminho_arquivo):
         if 'Saldo' in col: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     return df
 
-def processar_extrato_cef(caminho_arquivo):
-    df = pd.read_excel(caminho_arquivo, engine='openpyxl', skiprows=13)
-    df.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Saldo_Total']
+def processar_extrato_cef_bruto(caminho_arquivo):
+    col_specs = [(22, 45), (45, 85), (120, 137), (168, 185)]
+    names = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']
+    df = pd.read_fwf(caminho_arquivo, colspecs=col_specs, names=names, skiprows=4, encoding='latin-1')
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
+        df[col] = df[col].astype(str).str.replace(r'[CD]$', '', regex=True).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    if 'Agencia' not in df.columns: df['Agencia'] = '4064' 
+    if 'Agencia' not in df.columns: df['Agencia'] = '4064'
     return df
 
 # --- Bloco 2: Interface Web de Inspeção ---
@@ -145,13 +144,14 @@ if st.sidebar.button("Inspecionar Dados"):
                 except FileNotFoundError:
                     st.warning(f"Aviso: Extrato do BB para {st.session_state.mes_selecionado} não encontrado.")
                 
+                # MUDANÇA: Procura pelo arquivo .cef da CEF
                 try:
                     caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
-                    df_cef = processar_extrato_cef(caminho_cef)
+                    df_cef = processar_extrato_cef_bruto(caminho_cef)
                     extratos_encontrados.append(df_cef)
-                    st.info(f"Extrato da Caixa Econômica para {st.session_state.mes_selecionado} carregado.")
+                    st.info(f"Extrato da Caixa Econômica (.cef) para {st.session_state.mes_selecionado} carregado.")
                 except FileNotFoundError:
-                    st.warning(f"Aviso: Extrato da CEF para {st.session_state.mes_selecionado} não encontrado.")
+                    st.warning(f"Aviso: Extrato da CEF (.cef) para {st.session_state.mes_selecionado} não encontrado.")
 
                 if not extratos_encontrados:
                     st.error("Nenhum arquivo de extrato foi encontrado no repositório para o mês selecionado.")
@@ -172,11 +172,20 @@ if 'contabil_inspecao' in st.session_state and 'extrato_inspecao' in st.session_
     df_c = st.session_state['contabil_inspecao']
     df_e = st.session_state['extrato_inspecao']
     
-    chaves_comuns = pd.merge(df_c[['Conta_Chave']], df_e[['Conta_Chave']], on='Conta_Chave', how='inner')
-    
-    if chaves_comuns.empty:
-        st.error("NENHUMA CONTA EM COMUM FOI ENCONTRADA.")
-        st.write("Isso explica por que o relatório final não mostra divergências. Os números de conta (`Conta_Chave`) gerados para cada arquivo não são iguais.")
+    # Garante que a coluna Conta_Chave existe e é do tipo correto antes de fazer o merge
+    if 'Conta_Chave' in df_c.columns and 'Conta_Chave' in df_e.columns:
+        df_c.dropna(subset=['Conta_Chave'], inplace=True)
+        df_e.dropna(subset=['Conta_Chave'], inplace=True)
+        df_c['Conta_Chave'] = df_c['Conta_Chave'].astype('int64')
+        df_e['Conta_Chave'] = df_e['Conta_Chave'].astype('int64')
+
+        chaves_comuns = pd.merge(df_c[['Conta_Chave']], df_e[['Conta_Chave']], on='Conta_Chave', how='inner')
+        
+        if chaves_comuns.empty:
+            st.error("NENHUMA CONTA EM COMUM FOI ENCONTRADA.")
+            st.write("Isso explica por que o relatório final não mostra divergências. Os números de conta (`Conta_Chave`) gerados para cada arquivo não são iguais.")
+        else:
+            st.success(f"Foram encontradas {len(chaves_comuns)} contas em comum!")
+            st.write("A conciliação deveria funcionar para estas contas.")
     else:
-        st.success(f"Foram encontradas {len(chaves_comuns)} contas em comum!")
-        st.write("A conciliação deveria funcionar para estas contas. Se o resultado final ainda mostra 'nenhuma divergência', pode haver um erro na leitura dos valores de saldo.")
+        st.error("Uma das tabelas não possui a coluna 'Conta_Chave' necessária para a análise.")
