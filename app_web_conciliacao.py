@@ -77,7 +77,6 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
         st.error("Formato do arquivo contábil não reconhecido.")
         return pd.DataFrame()
 
-# FUNÇÕES QUE ESTAVAM FALTANDO, AGORA ADICIONADAS
 def processar_extrato_bb(caminho_arquivo):
     df = pd.read_excel(caminho_arquivo, engine='openpyxl', sheet_name='Table 1')
     if len(df.columns) == 7:
@@ -98,16 +97,22 @@ def processar_extrato_cef(caminho_arquivo):
     return df
 
 def realizar_conciliacao(df_contabil_limpo, df_extrato_unificado):
+    # Função de extração de chave segura contra números gigantes
     def extrair_chave(texto_conta):
-        try: return int(re.sub(r'\D', '', str(texto_conta)))
-        except: return None
+        try:
+            numeros = re.sub(r'\D', '', str(texto_conta))
+            if not numeros or len(numeros) > 18: # Ignora chaves vazias ou longas demais
+                return None
+            return int(numeros)
+        except (ValueError, IndexError, OverflowError):
+            return None
             
     df_contabil_limpo['Conta_Chave'] = df_contabil_limpo['Conta'].apply(extrair_chave)
     df_extrato_unificado['Conta_Chave'] = df_extrato_unificado['Conta'].apply(extrair_chave)
     
     for df in [df_contabil_limpo, df_extrato_unificado]:
         df.dropna(subset=['Conta_Chave', 'Conta'], inplace=True)
-        df['Conta_Chave'] = df['Conta_Chave'].astype(int)
+        df['Conta_Chave'] = df['Conta_Chave'].astype('int64')
 
     df_contabil_pivot = df_contabil_limpo.groupby('Conta_Chave').agg({'Conta': 'first','Saldo_Corrente_Contabil': 'sum','Saldo_Aplicado_Contabil': 'sum'}).reset_index()
     df_extrato_pivot = df_extrato_unificado.groupby('Conta_Chave')[['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']].sum().reset_index()
@@ -187,7 +192,8 @@ def create_pdf(df):
 
 # --- Bloco 3: Interface Web com Streamlit ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide", page_icon="🏦")
-st.title("🏦 Prefeitura da Cidade do Rio de Janeiro")
+# TÍTULO ALTERADO PARA VERIFICAÇÃO DE ATUALIZAÇÃO
+st.title("VERSÃO MAIS RECENTE - Conciliador")
 st.header("Controladoria Geral do Município")
 st.markdown("---")
 st.subheader("Conciliação de Saldos Bancários e Contábeis")
