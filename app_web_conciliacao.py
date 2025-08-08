@@ -132,7 +132,6 @@ st.subheader("Conciliação de Saldos Bancários e Contábeis")
 # Lógica para criar a lista de meses
 meses = {1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho", 7: "julho", 8: "agosto", 9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro"}
 ano_atual = datetime.now().year
-# Cria opções para o ano anterior, atual e próximo
 opcoes_meses_formatadas = [f"{nome.capitalize()} {ano}" for ano in range(ano_atual - 1, ano_atual + 2) for mes, nome in meses.items()]
 # Encontra o índice do mês e ano atuais para ser o padrão
 try:
