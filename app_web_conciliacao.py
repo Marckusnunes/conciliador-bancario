@@ -24,7 +24,7 @@ def realizar_conciliacao(contabilidade_file, extrato_file_path):
     if len(df_extrato.columns) == 7:
         df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Vazio']
         df_extrato = df_extrato.drop(columns=['Vazio'])
-    else:
+    else: # Se tiver 6 colunas ou outro número, assume o padrão de 6
         df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
 
     for col in df_extrato.columns:
