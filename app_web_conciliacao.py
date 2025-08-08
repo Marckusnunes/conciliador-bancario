@@ -3,6 +3,7 @@ import pandas as pd
 import re
 import io
 import numpy as np
+import csv
 from fpdf import FPDF
 from datetime import datetime
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
@@ -76,55 +77,54 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
         st.error("Formato do arquivo contábil não reconhecido.")
         return pd.DataFrame()
 
-def realizar_conciliacao(df_contabil_limpo, extrato_file_path):
-    df_extrato = pd.read_excel(extrato_file_path, engine='openpyxl', sheet_name='Table 1')
-    
-    if len(df_extrato.columns) == 7:
-        df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Vazio']
-        df_extrato = df_extrato.drop(columns=['Vazio'])
+# FUNÇÕES QUE ESTAVAM FALTANDO, AGORA ADICIONADAS
+def processar_extrato_bb(caminho_arquivo):
+    df = pd.read_excel(caminho_arquivo, engine='openpyxl', sheet_name='Table 1')
+    if len(df.columns) == 7:
+        df.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Vazio']
+        df = df.drop(columns=['Vazio'])
     else:
-        df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
+        df.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
+    for col in df.columns:
+        if 'Saldo' in col: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    return df
 
-    for col in df_extrato.columns:
-        if 'Saldo' in col:
-            df_extrato[col] = pd.to_numeric(df_extrato[col], errors='coerce').fillna(0)
+def processar_extrato_cef(caminho_arquivo):
+    df = pd.read_excel(caminho_arquivo, engine='openpyxl', skiprows=13)
+    df.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Saldo_Total']
+    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    if 'Agencia' not in df.columns: df['Agencia'] = '4064' 
+    return df
 
-    # MUDANÇA: Função de extração de chave mais segura contra números gigantes
+def realizar_conciliacao(df_contabil_limpo, df_extrato_unificado):
     def extrair_chave(texto_conta):
-        try:
-            numeros = re.sub(r'\D', '', str(texto_conta))
-            if not numeros or len(numeros) > 18: # Ignora chaves vazias ou longas demais
-                return None
-            return int(numeros)
-        except (ValueError, IndexError, OverflowError):
-            return None
+        try: return int(re.sub(r'\D', '', str(texto_conta)))
+        except: return None
             
     df_contabil_limpo['Conta_Chave'] = df_contabil_limpo['Conta'].apply(extrair_chave)
-    df_extrato['Conta_Chave'] = df_extrato['Conta'].apply(extrair_chave)
+    df_extrato_unificado['Conta_Chave'] = df_extrato_unificado['Conta'].apply(extrair_chave)
     
-    for df in [df_contabil_limpo, df_extrato]:
+    for df in [df_contabil_limpo, df_extrato_unificado]:
         df.dropna(subset=['Conta_Chave', 'Conta'], inplace=True)
         df['Conta_Chave'] = df['Conta_Chave'].astype(int)
 
     df_contabil_pivot = df_contabil_limpo.groupby('Conta_Chave').agg({'Conta': 'first','Saldo_Corrente_Contabil': 'sum','Saldo_Aplicado_Contabil': 'sum'}).reset_index()
-    df_extrato_pivot = df_extrato.groupby('Conta_Chave')[['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']].sum().reset_index()
+    df_extrato_pivot = df_extrato_unificado.groupby('Conta_Chave')[['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']].sum().reset_index()
 
     df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Conta_Chave', how='inner')
     if df_final.empty: return pd.DataFrame()
         
     df_final.rename(columns={'Conta': 'Conta Bancária'}, inplace=True)
-    
     df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
     
     df_final = df_final.set_index('Conta Bancária')
     df_final = df_final[['Saldo_Corrente_Contabil', 'Saldo_Corrente_Extrato', 'Diferenca_Movimento','Saldo_Aplicado_Contabil', 'Saldo_Aplicado_Extrato', 'Diferenca_Aplicacao']]
-    
     df_final.columns = pd.MultiIndex.from_tuples([
         ('Conta Movimento', 'Saldo Contábil'), ('Conta Movimento', 'Saldo Extrato'), ('Conta Movimento', 'Diferença'),
         ('Aplicação Financeira', 'Saldo Contábil'), ('Aplicação Financeira', 'Saldo Extrato'), ('Aplicação Financeira', 'Diferença')
     ], names=['Grupo', 'Item'])
-    
     return df_final
 
 # --- Bloco 2: Funções para Geração de Arquivos ---
@@ -241,33 +241,33 @@ if st.sidebar.button("Conciliar Agora"):
                     
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
+                st.session_state['df_resultado'] = None
     else:
         st.sidebar.warning("Por favor, carregue o seu arquivo de relatório contábil.")
 
 if 'df_resultado' in st.session_state:
-    df_final_formatado = st.session_state['df_resultado']
-    if df_final_formatado is not None and not df_final_formatado.empty:
-        st.markdown("---")
-        st.header(f"Resultado da Conciliação de {st.session_state.mes_selecionado}")
-        df_para_mostrar = df_final_formatado[
-            (df_final_formatado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
-            (df_final_formatado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
-        ].copy()
-        if df_para_mostrar.empty:
-            st.success("✅ Ótima notícia! Nenhuma divergência encontrada.")
+    resultado = st.session_state['df_resultado']
+    if isinstance(resultado, pd.DataFrame):
+        if resultado.empty:
+            st.info("Processamento concluído. Nenhuma conta correspondente foi encontrada entre os dois arquivos para gerar um relatório.")
         else:
-            st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-            formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
-            st.dataframe(df_para_mostrar.style.format(formatter=formatters))
-        st.markdown("---")
-        st.header("Download do Relatório Completo")
-        st.write("Os arquivos para download contêm todas as contas que foram encontradas em ambos os arquivos.")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            df_csv = df_final_formatado.copy(); df_csv.columns = [' - '.join(map(str,col)).strip() for col in df_csv.columns.values]; st.download_button("Baixar em CSV", df_csv.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
-        with col2:
-            st.download_button("Baixar em Excel", to_excel(df_final_formatado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        with col3:
-            st.download_button("Baixar em PDF", create_pdf(df_final_formatado), 'relatorio_consolidado.pdf', 'application/pdf')
-    elif df_final_formatado is not None:
-         st.info("Processamento concluído. Nenhuma conta correspondente foi encontrada entre os dois arquivos.")
+            st.header("Resultado da Conciliação Consolidada")
+            df_para_mostrar = resultado[
+                (resultado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
+                (resultado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
+            ].copy()
+            
+            if df_para_mostrar.empty:
+                st.success("✅ Ótima notícia! Nenhuma divergência encontrada.")
+            else:
+                st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
+                formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
+                st.dataframe(df_para_mostrar.style.format(formatter=formatters))
+            st.header("Download do Relatório Completo")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                df_csv = resultado.copy(); df_csv.columns = [' - '.join(map(str,col)).strip() for col in df_csv.columns.values]; st.download_button("Baixar em CSV", df_csv.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
+            with col2:
+                st.download_button("Baixar em Excel", to_excel(resultado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            with col3:
+                st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
