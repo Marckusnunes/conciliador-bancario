@@ -100,11 +100,10 @@ def processar_extrato_cef_bruto(caminho_arquivo):
     return df
 
 def realizar_conciliacao(df_contabil_limpo, df_extrato_unificado):
-    # MUDANÇA: Função de extração de chave mais segura contra números gigantes
     def extrair_chave(texto_conta):
         try:
             numeros = re.sub(r'\D', '', str(texto_conta))
-            if not numeros or len(numeros) > 18: # Ignora chaves vazias ou longas demais
+            if not numeros or len(numeros) > 18: 
                 return None
             return int(numeros)
         except (ValueError, IndexError, OverflowError):
@@ -221,6 +220,7 @@ if st.sidebar.button("Conciliar Agora"):
                 mes_ano = f"{partes_mes[0]}_{partes_mes[1]}"
                 
                 extratos_encontrados = []
+                df_bb, df_cef = None, None
                 try:
                     caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.xlsx"
                     df_bb = processar_extrato_bb(caminho_bb)
@@ -243,6 +243,13 @@ if st.sidebar.button("Conciliar Agora"):
                 else:
                     df_extrato_unificado = pd.concat(extratos_encontrados, ignore_index=True)
                     df_contabil_limpo = processar_relatorio_bruto(contabilidade_bruto)
+                    
+                    # Salva os dados limpos para a auditoria
+                    st.session_state['audit_contabil'] = df_contabil_limpo
+                    st.session_state['audit_extrato'] = df_extrato_unificado
+                    st.session_state['audit_bb'] = df_bb
+                    st.session_state['audit_cef'] = df_cef
+
                     df_resultado_final = realizar_conciliacao(df_contabil_limpo, df_extrato_unificado)
                     st.success("Conciliação Concluída com Sucesso!")
                     st.session_state['df_resultado'] = df_resultado_final
@@ -279,3 +286,14 @@ if 'df_resultado' in st.session_state:
                 st.download_button("Baixar em Excel", to_excel(resultado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
             with col3:
                 st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
+        
+        # Seção de auditoria
+        st.markdown("---")
+        with st.expander("Clique aqui para auditar os dados de origem"):
+            st.subheader("Dados Extraídos do Relatório Contábil (Após Limpeza)")
+            if 'audit_contabil' in st.session_state and st.session_state['audit_contabil'] is not None:
+                st.dataframe(st.session_state['audit_contabil'])
+            
+            st.subheader("Dados Extraídos dos Extratos Bancários (Unificados)")
+            if 'audit_extrato' in st.session_state and st.session_state['audit_extrato'] is not None:
+                st.dataframe(st.session_state['audit_extrato'])
