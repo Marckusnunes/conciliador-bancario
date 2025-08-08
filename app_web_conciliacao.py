@@ -12,10 +12,6 @@ from openpyxl.utils import get_column_letter
 # --- Bloco 1: Lógica Principal da Conciliação ---
 
 def processar_relatorio_bruto(arquivo_bruto_contabil):
-    """
-    Função universal que lê o arquivo contábil, detecta seu formato (bruto com 8 colunas
-    ou ajustado com 5/6 colunas) e o transforma no formato limpo e padronizado.
-    """
     df = pd.DataFrame()
     nome_arquivo = arquivo_bruto_contabil.name
     arquivo_bruto_contabil.seek(0)
@@ -24,7 +20,6 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
         if nome_arquivo.endswith('.xlsx') or nome_arquivo.endswith('.xls'):
             df = pd.read_excel(arquivo_bruto_contabil, engine='openpyxl')
         elif nome_arquivo.endswith('.csv'):
-            # Tenta ler com diferentes separadores
             df = pd.read_csv(arquivo_bruto_contabil, sep=';', encoding='latin-1', on_bad_lines='skip', header=None)
             if len(df.columns) <= 1:
                 arquivo_bruto_contabil.seek(0)
@@ -35,7 +30,6 @@ def processar_relatorio_bruto(arquivo_bruto_contabil):
 
     if df.empty: return pd.DataFrame()
 
-    # Verifica o número de colunas para decidir o que fazer
     if len(df.columns) >= 8:
         st.info("Detectado arquivo contábil bruto (8 colunas). Aplicando transformação...")
         # Pula as duas primeiras linhas que são cabeçalhos no arquivo bruto
@@ -105,23 +99,21 @@ def processar_extrato_bb(caminho_arquivo):
         if 'Saldo' in col: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     return df
 
-def processar_extrato_cef(caminho_arquivo):
-    df = pd.read_excel(caminho_arquivo, engine='openpyxl', skiprows=13)
-    df.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Saldo_Total']
+def processar_extrato_cef_bruto(caminho_arquivo):
+    """Lê e transforma o arquivo .cef bruto da Caixa."""
+    col_specs = [(22, 45), (45, 85), (120, 137), (168, 185)]
+    names = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']
+    df = pd.read_fwf(caminho_arquivo, colspecs=col_specs, names=names, skiprows=4, encoding='latin-1')
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
+        df[col] = df[col].astype(str).str.replace(r'[CD]$', '', regex=True).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    if 'Agencia' not in df.columns: df['Agencia'] = '4064' 
+    if 'Agencia' not in df.columns: df['Agencia'] = '4064'
     return df
 
 def realizar_conciliacao(df_contabil_limpo, df_extrato_unificado):
     def extrair_chave(texto_conta):
-        try:
-            numeros = re.sub(r'\D', '', str(texto_conta))
-            if not numeros or len(numeros) > 18: 
-                return None
-            return int(numeros)
-        except (ValueError, IndexError, OverflowError):
-            return None
+        try: return int(re.sub(r'\D', '', str(texto_conta)))
+        except: return None
             
     df_contabil_limpo['Conta_Chave'] = df_contabil_limpo['Conta'].apply(extrair_chave)
     df_extrato_unificado['Conta_Chave'] = df_extrato_unificado['Conta'].apply(extrair_chave)
@@ -224,7 +216,6 @@ except ValueError:
 st.selectbox("Selecione o Mês da Conciliação:", options=opcoes_meses_formatadas, index=index_padrao, key='mes_selecionado')
 
 st.sidebar.header("Carregar Relatório Contábil")
-# MUDANÇA: Seletor de arquivo agora aceita CSV e Excel
 contabilidade_bruto = st.sidebar.file_uploader(f"Selecione o seu Relatório Contábil de {st.session_state.mes_selecionado}", type=['csv', 'xlsx', 'xls'])
 
 if st.sidebar.button("Conciliar Agora"):
@@ -235,6 +226,7 @@ if st.sidebar.button("Conciliar Agora"):
                 mes_ano = f"{partes_mes[0]}_{partes_mes[1]}"
                 
                 extratos_encontrados = []
+                # MUDANÇA: Lógica para procurar e carregar os múltiplos extratos (BB e CEF)
                 try:
                     caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.xlsx"
                     df_bb = processar_extrato_bb(caminho_bb)
@@ -244,12 +236,13 @@ if st.sidebar.button("Conciliar Agora"):
                     st.warning(f"Aviso: Extrato do BB para {st.session_state.mes_selecionado} não encontrado.")
                 
                 try:
-                    caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.xlsx"
-                    df_cef = processar_extrato_cef(caminho_cef)
+                    # Tenta carregar o arquivo .cef da CEF
+                    caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
+                    df_cef = processar_extrato_cef_bruto(caminho_cef)
                     extratos_encontrados.append(df_cef)
-                    st.info(f"Extrato da Caixa Econômica para {st.session_state.mes_selecionado} carregado.")
+                    st.info(f"Extrato da Caixa Econômica (.cef) para {st.session_state.mes_selecionado} carregado.")
                 except FileNotFoundError:
-                    st.warning(f"Aviso: Extrato da CEF para {st.session_state.mes_selecionado} não encontrado.")
+                    st.warning(f"Aviso: Extrato da CEF (.cef) para {st.session_state.mes_selecionado} não encontrado.")
 
                 if not extratos_encontrados:
                     st.error("Nenhum arquivo de extrato foi encontrado no repositório para o mês selecionado.")
