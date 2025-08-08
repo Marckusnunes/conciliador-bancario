@@ -146,7 +146,7 @@ if st.sidebar.button("Inspecionar Dados"):
                     st.warning(f"Aviso: Extrato do BB para {st.session_state.mes_selecionado} não encontrado.")
                 
                 try:
-                    caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.xlsx"
+                    caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
                     df_cef = processar_extrato_cef(caminho_cef)
                     extratos_encontrados.append(df_cef)
                     st.info(f"Extrato da Caixa Econômica para {st.session_state.mes_selecionado} carregado.")
