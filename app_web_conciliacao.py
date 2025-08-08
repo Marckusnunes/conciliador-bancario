@@ -124,7 +124,7 @@ def create_pdf(df):
 
 # --- Bloco 3: Interface Web com Streamlit ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide", page_icon="🏦")
-st.title("Prefeitura da Cidade do Rio de Janeiro")
+st.title("🏦 Prefeitura da Cidade do Rio de Janeiro")
 st.header("Controladoria Geral do Município")
 st.markdown("---")
 st.subheader("Conciliação de Saldos Bancários e Contábeis")
@@ -132,9 +132,16 @@ st.subheader("Conciliação de Saldos Bancários e Contábeis")
 # Lógica para criar a lista de meses
 meses = {1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho", 7: "julho", 8: "agosto", 9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro"}
 ano_atual = datetime.now().year
+# Cria opções para o ano anterior, atual e próximo
 opcoes_meses_formatadas = [f"{nome.capitalize()} {ano}" for ano in range(ano_atual - 1, ano_atual + 2) for mes, nome in meses.items()]
+# Encontra o índice do mês e ano atuais para ser o padrão
+try:
+    index_padrao = opcoes_meses_formatadas.index(f"{meses[datetime.now().month].capitalize()} {ano_atual}")
+except ValueError:
+    index_padrao = len(opcoes_meses_formatadas) // 2
 
-st.selectbox("Selecione o Mês da Conciliação:", options=opcoes_meses_formatadas, index=len(opcoes_meses_formatadas)//2, key='mes_selecionado')
+
+st.selectbox("Selecione o Mês da Conciliação:", options=opcoes_meses_formatadas, index=index_padrao, key='mes_selecionado')
 
 st.sidebar.header("Carregar Relatório Contábil")
 contabilidade = st.sidebar.file_uploader(f"Selecione o seu Relatório Contábil de {st.session_state.mes_selecionado}", type=['xlsx', 'xls'])
