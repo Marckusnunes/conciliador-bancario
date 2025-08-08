@@ -9,7 +9,6 @@ from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
-
 def realizar_conciliacao(contabilidade_file, extrato_file_path):
     # --- Processamento do Relatório Contábil (contabilidade) ---
     df_contabil = pd.read_excel(contabilidade_file, engine='openpyxl')
@@ -19,9 +18,14 @@ def realizar_conciliacao(contabilidade_file, extrato_file_path):
         df_contabil[col] = pd.to_numeric(df_contabil[col], errors='coerce').fillna(0)
 
     # --- Processamento do Extrato Consolidado (extrato) ---
-    # MUDANÇA: Agora lê o arquivo a partir de um caminho local no servidor, não de um upload
     df_extrato = pd.read_excel(extrato_file_path, engine='openpyxl', sheet_name='Table 1')
-    df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
+    
+    # MUDANÇA: Lógica robusta para lidar com 6 ou 7 colunas no extrato
+    if len(df_extrato.columns) == 7:
+        df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Vazio']
+        df_extrato = df_extrato.drop(columns=['Vazio'])
+    else:
+        df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
 
     for col in df_extrato.columns:
         if 'Saldo' in col:
@@ -125,23 +129,22 @@ st.header("Controladoria Geral do Município")
 st.markdown("---")
 st.subheader("Conciliação de Saldos Bancários e Contábeis")
 
-# MUDANÇA: Lógica para criar a lista de meses
-meses = {1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"}
+# Lógica para criar a lista de meses
+meses = {1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho", 7: "julho", 8: "agosto", 9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro"}
 ano_atual = datetime.now().year
-opcoes_meses = [f"{meses[m]} {a}" for a in range(ano_atual - 1, ano_atual + 2) for m in range(1, 13)]
+opcoes_meses_formatadas = [f"{nome.capitalize()} {ano}" for ano in range(ano_atual - 1, ano_atual + 2) for mes, nome in meses.items()]
 
-mes_selecionado = st.selectbox("Selecione o Mês da Conciliação:", options=opcoes_meses, index=len(opcoes_meses)//2)
+st.selectbox("Selecione o Mês da Conciliação:", options=opcoes_meses_formatadas, index=len(opcoes_meses_formatadas)//2, key='mes_selecionado')
 
 st.sidebar.header("Carregar Relatório Contábil")
-contabilidade = st.sidebar.file_uploader(f"Selecione o seu Relatório Contábil de {mes_selecionado}", type=['xlsx', 'xls'])
+contabilidade = st.sidebar.file_uploader(f"Selecione o seu Relatório Contábil de {st.session_state.mes_selecionado}", type=['xlsx', 'xls'])
 
-# MUDANÇA: Lógica para processar
 if st.sidebar.button("Conciliar Agora"):
     if contabilidade is not None:
         with st.spinner("Processando..."):
             try:
                 # Constrói o nome do arquivo de extrato esperado
-                partes_mes = mes_selecionado.lower().split()
+                partes_mes = st.session_state.mes_selecionado.lower().split()
                 nome_extrato_esperado = f"extrato_{partes_mes[0]}_{partes_mes[1]}.xlsx"
                 caminho_extrato = f"extratos_consolidados/{nome_extrato_esperado}"
 
@@ -149,7 +152,7 @@ if st.sidebar.button("Conciliar Agora"):
                 st.success("Conciliação Concluída com Sucesso!")
                 st.session_state['df_resultado'] = df_resultado_formatado
             except FileNotFoundError:
-                st.error(f"ERRO: O arquivo de extrato para {mes_selecionado} ('{nome_extrato_esperado}') não foi encontrado no repositório.")
+                st.error(f"ERRO: O arquivo de extrato para {st.session_state.mes_selecionado} ('{nome_extrato_esperado}') não foi encontrado.")
                 st.error("Por favor, peça ao administrador para carregar o arquivo correto na pasta 'extratos_consolidados' no GitHub.")
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
@@ -160,7 +163,7 @@ if 'df_resultado' in st.session_state:
     df_final_formatado = st.session_state['df_resultado']
     if df_final_formatado is not None and not df_final_formatado.empty:
         st.markdown("---")
-        st.header(f"Resultado da Conciliação de {mes_selecionado}")
+        st.header(f"Resultado da Conciliação de {st.session_state.mes_selecionado}")
         df_para_mostrar = df_final_formatado[
             (df_final_formatado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
             (df_final_formatado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
