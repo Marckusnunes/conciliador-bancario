@@ -8,14 +8,40 @@ from datetime import datetime
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
-# --- Bloco 1: Funções de Processamento ---
+# --- Bloco 1: Lógica Principal da Conciliação ---
 
 def processar_relatorio_contabil(arquivo_carregado):
-    """Lê e prepara o arquivo da contabilidade."""
-    df = pd.read_excel(arquivo_carregado, engine='openpyxl')
+    """
+    Função universal que lê o arquivo contábil, detectando se é CSV ou Excel
+    e o transforma no formato limpo e padronizado.
+    """
+    df = pd.DataFrame()
+    nome_arquivo = arquivo_carregado.name
+    arquivo_carregado.seek(0) # Garante que a leitura comece do início do arquivo
+
+    try:
+        if nome_arquivo.endswith('.xlsx') or nome_arquivo.endswith('.xls'):
+            st.info("Detectado arquivo Excel para o relatório contábil.")
+            df = pd.read_excel(arquivo_carregado, engine='openpyxl')
+        elif nome_arquivo.endswith('.csv'):
+            st.info("Detectado arquivo CSV para o relatório contábil.")
+            # Tenta ler com diferentes separadores
+            df = pd.read_csv(arquivo_carregado, sep=';', encoding='latin-1', on_bad_lines='skip')
+            if len(df.columns) <= 1:
+                arquivo_carregado.seek(0)
+                df = pd.read_csv(arquivo_carregado, sep=',', encoding='latin-1', on_bad_lines='skip')
+    except Exception as e:
+        st.error(f"Não foi possível ler o arquivo contábil: {e}")
+        return pd.DataFrame()
+
+    if df.empty:
+        st.warning("O arquivo contábil está vazio ou não pôde ser lido.")
+        return pd.DataFrame()
+
     df.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
     for col in ['Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    
     return df
 
 def processar_extrato_bb(caminho_arquivo):
@@ -37,9 +63,8 @@ def processar_extrato_cef(caminho_arquivo):
     df.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Saldo_Total']
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    # Adiciona a coluna Agência que pode não estar presente no corpo da tabela da CEF
     if 'Agencia' not in df.columns:
-        df['Agencia'] = '4064' # Valor padrão para CEF conforme arquivo
+        df['Agencia'] = '4064' 
     return df
 
 def realizar_conciliacao(df_contabil, df_extrato_unificado):
@@ -62,6 +87,7 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
     if df_final.empty: return pd.DataFrame()
         
     df_final.rename(columns={'Conta': 'Conta Bancária'}, inplace=True)
+    
     df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
     
@@ -120,16 +146,17 @@ st.subheader("Conciliação de Saldos Bancários e Contábeis")
 
 meses = {1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho", 7: "julho", 8: "agosto", 9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro"}
 ano_atual = datetime.now().year
-opcoes_meses_formatadas = [f"{nome.capitalize()} {ano}" for ano in range(ano_atual, ano_atual + 2) for mes, nome in meses.items()]
+opcoes_meses_formatadas = [f"{nome.capitalize()} {ano}" for ano in range(ano_atual - 1, ano_atual + 2) for mes, nome in meses.items()]
 try:
     index_padrao = opcoes_meses_formatadas.index(f"{meses[datetime.now().month].capitalize()} {ano_atual}")
 except ValueError:
-    index_padrao = 0
+    index_padrao = len(opcoes_meses_formatadas) // 2
 
 st.selectbox("Selecione o Mês da Conciliação:", options=opcoes_meses_formatadas, index=index_padrao, key='mes_selecionado')
 
 st.sidebar.header("Carregar Relatório Contábil")
-contabilidade = st.sidebar.file_uploader(f"Selecione o seu Relatório Contábil de {st.session_state.mes_selecionado}", type=['xlsx', 'xls'])
+# MUDANÇA: Seletor aceita CSV e Excel
+contabilidade = st.sidebar.file_uploader(f"Selecione o seu Relatório Contábil de {st.session_state.mes_selecionado}", type=['csv', 'xlsx', 'xls'])
 
 if st.sidebar.button("Conciliar Agora"):
     if contabilidade is not None:
@@ -144,18 +171,18 @@ if st.sidebar.button("Conciliar Agora"):
                     caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.xlsx"
                     df_bb = processar_extrato_bb(caminho_bb)
                     extratos_encontrados.append(df_bb)
-                    st.info(f"Extrato do Banco do Brasil para {st.session_state.mes_selecionado} carregado com sucesso.")
+                    st.info(f"Extrato do Banco do Brasil para {st.session_state.mes_selecionado} carregado.")
                 except FileNotFoundError:
-                    st.warning(f"Aviso: Extrato do Banco do Brasil para {st.session_state.mes_selecionado} não encontrado.")
+                    st.warning(f"Aviso: Extrato do BB para {st.session_state.mes_selecionado} não encontrado.")
                 
                 # Tenta carregar extrato da CEF
                 try:
                     caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.xlsx"
                     df_cef = processar_extrato_cef(caminho_cef)
                     extratos_encontrados.append(df_cef)
-                    st.info(f"Extrato da Caixa Econômica para {st.session_state.mes_selecionado} carregado com sucesso.")
+                    st.info(f"Extrato da Caixa Econômica para {st.session_state.mes_selecionado} carregado.")
                 except FileNotFoundError:
-                    st.warning(f"Aviso: Extrato da Caixa Econômica para {st.session_state.mes_selecionado} não encontrado.")
+                    st.warning(f"Aviso: Extrato da CEF para {st.session_state.mes_selecionado} não encontrado.")
 
                 if not extratos_encontrados:
                     st.error("Nenhum arquivo de extrato foi encontrado para o mês selecionado. Peça ao administrador para carregá-los.")
@@ -198,4 +225,4 @@ if 'df_resultado' in st.session_state:
         with col3:
             st.download_button("Baixar em PDF", create_pdf(df_final_formatado), 'relatorio_consolidado.pdf', 'application/pdf')
     elif df_final_formatado is not None:
-         st.info("Processamento concluído. Nenhuma conta correspondente foi encontrada entre os arquivos.")
+         st.info("Processamento concluído. Nenhuma conta correspondente foi encontrada entre os dois arquivos.")
