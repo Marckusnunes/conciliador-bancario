@@ -3,6 +3,7 @@ import pandas as pd
 import re
 import io
 import numpy as np
+import csv
 
 # --- Bloco 1: Funções de Processamento ---
 
@@ -144,7 +145,7 @@ if st.sidebar.button("Inspecionar Dados"):
                 except FileNotFoundError:
                     st.warning(f"Aviso: Extrato do BB para {st.session_state.mes_selecionado} não encontrado.")
                 
-                # MUDANÇA: Procura pelo arquivo .cef da CEF
+                # MUDANÇA: Procura pelo arquivo .cef da CEF e usa a função correta
                 try:
                     caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
                     df_cef = processar_extrato_cef_bruto(caminho_cef)
@@ -172,7 +173,6 @@ if 'contabil_inspecao' in st.session_state and 'extrato_inspecao' in st.session_
     df_c = st.session_state['contabil_inspecao']
     df_e = st.session_state['extrato_inspecao']
     
-    # Garante que a coluna Conta_Chave existe e é do tipo correto antes de fazer o merge
     if 'Conta_Chave' in df_c.columns and 'Conta_Chave' in df_e.columns:
         df_c.dropna(subset=['Conta_Chave'], inplace=True)
         df_e.dropna(subset=['Conta_Chave'], inplace=True)
