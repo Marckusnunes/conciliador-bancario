@@ -12,7 +12,12 @@ from openpyxl.utils import get_column_letter
 def realizar_conciliacao(contabilidade_file, extrato_file_path):
     # --- Processamento do Relatório Contábil (contabilidade) ---
     df_contabil = pd.read_excel(contabilidade_file, engine='openpyxl')
-    df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
+    # Lógica robusta para lidar com 6 ou 7 colunas no arquivo da contabilidade
+    if len(df_contabil.columns) == 7:
+        df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil', 'Vazio']
+        df_contabil = df_contabil.drop(columns=['Vazio'])
+    else:
+        df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
     
     for col in ['Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']:
         df_contabil[col] = pd.to_numeric(df_contabil[col], errors='coerce').fillna(0)
@@ -20,11 +25,11 @@ def realizar_conciliacao(contabilidade_file, extrato_file_path):
     # --- Processamento do Extrato Consolidado (extrato) ---
     df_extrato = pd.read_excel(extrato_file_path, engine='openpyxl', sheet_name='Table 1')
     
-    # MUDANÇA: Lógica robusta para lidar com 6 ou 7 colunas no extrato
+    # Lógica robusta para lidar com 6 ou 7 colunas no extrato
     if len(df_extrato.columns) == 7:
         df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Vazio']
         df_extrato = df_extrato.drop(columns=['Vazio'])
-    else: # Se tiver 6 colunas ou outro número, assume o padrão de 6
+    else:
         df_extrato.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
 
     for col in df_extrato.columns:
@@ -129,16 +134,13 @@ st.header("Controladoria Geral do Município")
 st.markdown("---")
 st.subheader("Conciliação de Saldos Bancários e Contábeis")
 
-# Lógica para criar a lista de meses
 meses = {1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho", 7: "julho", 8: "agosto", 9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro"}
 ano_atual = datetime.now().year
 opcoes_meses_formatadas = [f"{nome.capitalize()} {ano}" for ano in range(ano_atual - 1, ano_atual + 2) for mes, nome in meses.items()]
-# Encontra o índice do mês e ano atuais para ser o padrão
 try:
     index_padrao = opcoes_meses_formatadas.index(f"{meses[datetime.now().month].capitalize()} {ano_atual}")
 except ValueError:
     index_padrao = len(opcoes_meses_formatadas) // 2
-
 
 st.selectbox("Selecione o Mês da Conciliação:", options=opcoes_meses_formatadas, index=index_padrao, key='mes_selecionado')
 
@@ -149,7 +151,6 @@ if st.sidebar.button("Conciliar Agora"):
     if contabilidade is not None:
         with st.spinner("Processando..."):
             try:
-                # Constrói o nome do arquivo de extrato esperado
                 partes_mes = st.session_state.mes_selecionado.lower().split()
                 nome_extrato_esperado = f"extrato_{partes_mes[0]}_{partes_mes[1]}.xlsx"
                 caminho_extrato = f"extratos_consolidados/{nome_extrato_esperado}"
