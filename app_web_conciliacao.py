@@ -256,7 +256,25 @@ if 'df_resultado' in st.session_state:
             else:
                 st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
                 formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in resultado.columns}
-                st.dataframe(df_para_mostrar.style.format(formatter=formatters))
+                # --- Início do Bloco para Substituir ---
+
+            # Função para colorir as diferenças que não são zero
+            def colorir_diferencas(valor):
+                if valor != 0:
+                    return 'color: red'
+                else:
+                    return '' # Sem estilo para valores zero
+
+            # Formatação dos números para o padrão brasileiro (a mesma de antes)
+            formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
+
+            # Aplica o estilo de cor PRIMEIRO, e a formatação de texto DEPOIS
+            st.dataframe(df_para_mostrar.style
+                .applymap(colorir_diferencas, subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')])
+                .format(formatter=formatters)
+            )
+            
+            # --- Fim do Bloco para Substituir ---
             st.header("Download do Relatório Completo")
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -295,3 +313,4 @@ if 'df_resultado' in st.session_state:
                         how='inner'
                     )
                     st.dataframe(chaves_comuns)
+
