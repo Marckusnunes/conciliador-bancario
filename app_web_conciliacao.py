@@ -53,8 +53,8 @@ def realizar_diagnostico(contabilidade_file, extrato_bb_path, extrato_cef_path):
                     if len(numeric_part) > 4: return numeric_part[4:]
                 return None
             df_cef['Chave Primaria'] = df_cef['Conta Vinculada'].apply(extrair_chave_cef)
-            # MUDANÇA: Renomeia a coluna para 'Conta' para padronizar
-            df_cef.rename(columns={'Conta Vinculada': 'Conta'}, inplace=True)
+            # MUDANÇA: Renomeia 'Conta Vinculada' para 'Conta' e 'Nome' para 'Titular' para padronizar
+            df_cef.rename(columns={'Conta Vinculada': 'Conta', 'Nome': 'Titular'}, inplace=True)
             extratos_encontrados.append(df_cef[['Conta', 'Titular', 'Chave Primaria']])
             st.info("Extrato da Caixa (.cef) processado.")
         else:
