@@ -173,7 +173,26 @@ if 'df_resultado' in st.session_state:
         else:
             st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
             formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
-            st.dataframe(df_para_mostrar.style.format(formatter=formatters))
+            # --- INÍCIO DO BLOCO PARA COLAR ---
+
+            # Função para colorir as diferenças que não são zero
+            def colorir_diferencas(valor):
+                # Se o valor for numerico e diferente de zero, retorna a cor vermelha
+                if isinstance(valor, (int, float)) and valor != 0:
+                    return 'color: red'
+                # Caso contrário, não aplica estilo
+                return ''
+
+            # Formatação dos números para o padrão brasileiro (a mesma de antes)
+            formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
+
+            # Aplica o estilo de cor e depois o formato de texto
+            st.dataframe(df_para_mostrar.style
+                .applymap(colorir_diferencas, subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')])
+                .format(formatter=formatters)
+            )
+            
+            # --- FIM DO BLOCO PARA COLAR ---
 
         st.header("Download do Relatório Completo")
         st.write("Os arquivos para download contêm todas as contas que foram encontradas em ambos os arquivos.")
@@ -188,3 +207,4 @@ if 'df_resultado' in st.session_state:
             st.download_button("Baixar em PDF", create_pdf(df_final_formatado), 'relatorio_consolidado.pdf', 'application/pdf')
     elif df_final_formatado is not None:
          st.info("Processamento concluído. Nenhuma conta correspondente foi encontrada entre os dois arquivos.")
+
