@@ -3,107 +3,127 @@ import pandas as pd
 import re
 import io
 import numpy as np
+import csv
 from fpdf import FPDF
 from datetime import datetime
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
-# --- Bloco 1: Lógica Principal da Conciliação ---
+# --- Bloco 1: Lógica Principal da Conciliação (Tudo em uma única função) ---
 
-def processar_relatorio_contabil(arquivo_carregado):
-    """
-    Lê o relatório contábil bruto (CSV) e aplica a nova lógica de extração de chave.
-    """
-    df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
-    
-    def extrair_chave_contabil(texto_conta):
-        if isinstance(texto_conta, str):
-            numeric_part = re.sub(r'\D', '', texto_conta)
-            if len(numeric_part) > 7:
-                return numeric_part[7:]
-            return numeric_part
-        return None
+def realizar_conciliacao_completa(contabilidade_file, extrato_bb_path, extrato_cef_path):
+    # --- ETAPA 1: Ler e preparar o arquivo da Contabilidade ---
+    df_contabil = pd.DataFrame()
+    nome_arquivo = contabilidade_file.name
+    contabilidade_file.seek(0)
+    try:
+        if nome_arquivo.endswith('.xlsx') or nome_arquivo.endswith('.xls'):
+            df_contabil = pd.read_excel(contabilidade_file, engine='openpyxl')
+        elif nome_arquivo.endswith('.csv'):
+            df_contabil = pd.read_csv(contabilidade_file, sep=';', encoding='latin-1', on_bad_lines='skip', header=None)
+            if len(df_contabil.columns) <= 1:
+                contabilidade_file.seek(0)
+                df_contabil = pd.read_csv(contabilidade_file, sep=',', encoding='latin-1', on_bad_lines='skip', header=None)
+    except Exception as e:
+        st.error(f"Não foi possível ler o arquivo contábil: {e}")
+        return pd.DataFrame()
+
+    if df_contabil.empty: return pd.DataFrame()
+
+    # Verifica se é o arquivo bruto (8+ colunas) ou o ajustado (6 colunas)
+    if len(df_contabil.columns) >= 8:
+        st.info("Detectado arquivo contábil bruto (8 colunas). Aplicando transformação...")
+        if isinstance(df_contabil.iloc[0,0], str) and 'Unidade Gestora' in df_contabil.iloc[0,0]:
+             df_contabil = df_contabil.iloc[2:].reset_index(drop=True)
+        df_contabil = df_contabil.iloc[:,:8]
+        df_contabil.columns = ['Unidade Gestora', 'Domicílio bancário', 'Conta contábil', 'Conta Corrente', 'Saldo Inicial', 'Débito', 'Crédito', 'Saldo Final']
+        df_contabil.dropna(subset=['Domicílio bancário'], inplace=True)
+        df_contabil = df_contabil[~df_contabil['Conta contábil'].astype(str).str.contains('Total por', na=False)].copy()
+        df_contabil['Saldo Final'] = pd.to_numeric(df_contabil['Saldo Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
         
-    df['Chave Primaria'] = df['Domicílio bancário'].apply(extrair_chave_contabil).astype(str)
-    df.dropna(subset=['Chave Primaria'], inplace=True)
+        df_pivot = df_contabil.pivot_table(index='Domicílio bancário', columns='Conta contábil', values='Saldo Final', aggfunc='sum').reset_index()
+        rename_dict = {c: 'Saldo_Corrente_Contabil' for c in df_pivot.columns if '111111901' in c}
+        rename_dict.update({c: 'Saldo_Aplicado_Contabil' for c in df_pivot.columns if '111115001' in c})
+        df_pivot.rename(columns=rename_dict, inplace=True)
+
+        def formatar_conta(texto_conta):
+            if not isinstance(texto_conta, str): return ""
+            try:
+                num_sem_zeros = texto_conta.lstrip('0');
+                if not num_sem_zeros: return "0"
+                principal, verificador = num_sem_zeros[:-1], num_sem_zeros[-1]
+                return f"{int(principal):,}".replace(',', '.') + f"-{verificador}"
+            except: return texto_conta
+        
+        partes_domicilio = df_pivot['Domicílio bancário'].str.split(' - ', expand=True)
+        df_contabil_limpo = pd.DataFrame()
+        df_contabil_limpo['Conta'] = partes_domicilio.get(2).apply(formatar_conta)
+        df_contabil_limpo['Titular'] = partes_domicilio.get(3)
+        df_contabil_limpo['Saldo_Corrente_Contabil'] = df_pivot.get('Saldo_Corrente_Contabil')
+        df_contabil_limpo['Saldo_Aplicado_Contabil'] = df_pivot.get('Saldo Aplicado')
+        df_contabil_limpo.fillna(0, inplace=True)
+    else: # Se for o arquivo ajustado de 6 colunas
+        st.info("Detectado arquivo contábil ajustado.")
+        df_contabil.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Contabil', 'Saldo_Cta_Invest_Contabil', 'Saldo_Aplicado_Contabil']
+        df_contabil_limpo = df_contabil
+        for col in ['Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']:
+            df_contabil_limpo[col] = pd.to_numeric(df_contabil_limpo[col], errors='coerce').fillna(0)
+
+    # --- ETAPA 2: Ler e preparar os arquivos do Extrato ---
+    extratos_encontrados = []
+    try:
+        df_bb = pd.read_excel(extrato_bb_path, engine='openpyxl', sheet_name='Table 1')
+        if len(df_bb.columns) == 7:
+            df_bb.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Vazio']
+            df_bb = df_bb.drop(columns=['Vazio'])
+        else:
+            df_bb.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
+        for col in df_bb.columns:
+            if 'Saldo' in col: df_bb[col] = pd.to_numeric(df_bb[col], errors='coerce').fillna(0)
+        extratos_encontrados.append(df_bb)
+        st.info("Extrato do Banco do Brasil carregado.")
+    except FileNotFoundError:
+        st.warning("Aviso: Extrato do BB não encontrado.")
     
-    df['Saldo Final'] = pd.to_numeric(
-        df['Saldo Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
-        errors='coerce'
-    ).fillna(0)
+    try:
+        df_cef = pd.read_excel(extrato_cef_path, engine='openpyxl', skiprows=13)
+        df_cef.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Saldo_Total']
+        for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
+            df_cef[col] = pd.to_numeric(df_cef[col], errors='coerce').fillna(0)
+        if 'Agencia' not in df_cef.columns: df_cef['Agencia'] = '4064'
+        extratos_encontrados.append(df_cef)
+        st.info("Extrato da Caixa Econômica carregado.")
+    except FileNotFoundError:
+        st.warning("Aviso: Extrato da CEF não encontrado.")
 
-    df_pivot = df.pivot_table(index='Chave Primaria', columns='Conta contábil', values='Saldo Final', aggfunc='sum').reset_index()
+    if not extratos_encontrados:
+        st.error("Nenhum arquivo de extrato foi encontrado no repositório.")
+        return pd.DataFrame()
+        
+    df_extrato_unificado = pd.concat(extratos_encontrados, ignore_index=True)
+
+    # --- ETAPA 3: Conciliação ---
+    def extrair_chave(texto_conta):
+        try:
+            numeros = re.sub(r'\D', '', str(texto_conta))
+            if not numeros or len(numeros) > 18: return None
+            return int(numeros)
+        except: return None
+            
+    df_contabil_limpo['Conta_Chave'] = df_contabil_limpo['Conta'].apply(extrair_chave)
+    df_extrato_unificado['Conta_Chave'] = df_extrato_unificado['Conta'].apply(extrair_chave)
     
-    rename_dict = {c: 'Saldo_Corrente_Contabil' for c in df_pivot.columns if '111111901' in c}
-    rename_dict.update({c: 'Saldo_Aplicado_Contabil' for c in df_pivot.columns if '111115001' in c})
-    df_pivot.rename(columns=rename_dict, inplace=True)
+    for df in [df_contabil_limpo, df_extrato_unificado]:
+        df.dropna(subset=['Conta_Chave', 'Conta'], inplace=True)
+        df['Conta_Chave'] = df['Conta_Chave'].astype('int64')
 
-    # Adiciona a descrição da conta para o relatório final
-    mapa_conta = df[['Chave Primaria', 'Domicílio bancário']].drop_duplicates().set_index('Chave Primaria')
-    df_final = df_pivot.join(mapa_domicilio, on='Chave Primaria')
-    
-    return df_final
+    df_contabil_pivot = df_contabil_limpo.groupby('Conta_Chave').agg({'Conta': 'first','Saldo_Corrente_Contabil': 'sum','Saldo_Aplicado_Contabil': 'sum'}).reset_index()
+    df_extrato_pivot = df_extrato_unificado.groupby('Conta_Chave')[['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']].sum().reset_index()
 
-def processar_extrato_bb(caminho_arquivo):
-    df = pd.read_excel(caminho_arquivo, engine='openpyxl', sheet_name='Table 1')
-    if len(df.columns) == 7:
-        df.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Vazio']
-        df = df.drop(columns=['Vazio'])
-    else:
-        df.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
-    for col in df.columns:
-        if 'Saldo' in col: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    
-    # Usa uma chave genérica para unificar
-    df['Chave Primaria'] = df['Conta'].astype(str).apply(lambda x: re.sub(r'\D', '', x)).astype(str)
-    return df
-
-def processar_extrato_cef_bruto(caminho_arquivo):
-    with open(caminho_arquivo, 'r', encoding='latin-1') as f:
-        cef_content = f.readlines()
-
-    header_line_index = -1
-    for i, line in enumerate(cef_content):
-        if line.strip().startswith("Conta Vinculada;"):
-            header_line_index = i
-            break
-    
-    if header_line_index == -1: return pd.DataFrame()
-
-    data_io = io.StringIO("".join(cef_content[header_line_index:]))
-    df = pd.read_csv(data_io, sep=';')
-    
-    def extrair_chave_cef(texto_conta):
-        if isinstance(texto_conta, str):
-            numeric_part = re.sub(r'\D', '', texto_conta)
-            if len(numeric_part) > 4:
-                return numeric_part[4:]
-        return None
-    
-    df['Chave Primaria'] = df['Conta Vinculada'].apply(extrair_chave_cef).astype(str)
-    
-    df.rename(columns={
-        'Saldo Conta Corrente (R$)': 'Saldo_Corrente_Extrato',
-        'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
-    }, inplace=True)
-
-    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
-
-    return df
-
-def realizar_conciliacao(df_contabil, df_extrato_unificado):
-    df_contabil_pivot = df_contabil[['Chave Primaria', 'Domicílio bancário', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
-    df_extrato_pivot = df_extrato_unificado.groupby('Chave Primaria').agg({
-        'Saldo_Corrente_Extrato': 'sum',
-        'Saldo_Aplicado_Extrato': 'sum'
-    }).reset_index()
-
-    df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Chave Primaria', how='inner')
+    df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Conta_Chave', how='inner')
     if df_final.empty: return pd.DataFrame()
         
-    df_final.rename(columns={'Domicílio bancário': 'Conta Bancária'}, inplace=True)
+    df_final.rename(columns={'Conta': 'Conta Bancária'}, inplace=True)
     df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
     
@@ -191,7 +211,7 @@ except ValueError:
 st.selectbox("Selecione o Mês da Conciliação:", options=opcoes_meses_formatadas, index=index_padrao, key='mes_selecionado')
 
 st.sidebar.header("Carregar Relatório Contábil")
-contabilidade_bruto = st.sidebar.file_uploader(f"Selecione o seu Relatório Contábil Bruto de {st.session_state.mes_selecionado}", type=['csv'])
+contabilidade_bruto = st.sidebar.file_uploader(f"Selecione o seu Relatório Contábil de {st.session_state.mes_selecionado}", type=['csv', 'xlsx', 'xls'])
 
 if st.sidebar.button("Conciliar Agora"):
     if contabilidade_bruto is not None:
@@ -200,32 +220,12 @@ if st.sidebar.button("Conciliar Agora"):
                 partes_mes = st.session_state.mes_selecionado.lower().split()
                 mes_ano = f"{partes_mes[0]}_{partes_mes[1]}"
                 
-                extratos_encontrados = []
-                try:
-                    caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.xlsx"
-                    df_bb = processar_extrato_bb(caminho_bb)
-                    extratos_encontrados.append(df_bb)
-                    st.info(f"Extrato do Banco do Brasil para {st.session_state.mes_selecionado} carregado.")
-                except FileNotFoundError:
-                    st.warning(f"Aviso: Extrato do BB para {st.session_state.mes_selecionado} não encontrado.")
-                
-                try:
-                    caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
-                    df_cef = processar_extrato_cef_bruto(caminho_cef)
-                    extratos_encontrados.append(df_cef)
-                    st.info(f"Extrato da Caixa Econômica (.cef) para {st.session_state.mes_selecionado} carregado.")
-                except FileNotFoundError:
-                    st.warning(f"Aviso: Extrato da CEF (.cef) para {st.session_state.mes_selecionado} não encontrado.")
+                caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.xlsx"
+                caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.xlsx"
 
-                if not extratos_encontrados:
-                    st.error("Nenhum arquivo de extrato foi encontrado no repositório para o mês selecionado.")
-                    st.session_state['df_resultado'] = None
-                else:
-                    df_extrato_unificado = pd.concat(extratos_encontrados, ignore_index=True)
-                    df_contabil_limpo = processar_relatorio_contabil(contabilidade_bruto)
-                    df_resultado_final = realizar_conciliacao(df_contabil_limpo, df_extrato_unificado)
-                    st.success("Conciliação Concluída com Sucesso!")
-                    st.session_state['df_resultado'] = df_resultado_final
+                df_resultado_final = realizar_conciliacao_completa(contabilidade_bruto, caminho_bb, caminho_cef)
+                st.success("Conciliação Concluída com Sucesso!")
+                st.session_state['df_resultado'] = df_resultado_final
                     
             except Exception as e:
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
@@ -237,7 +237,7 @@ if 'df_resultado' in st.session_state:
     resultado = st.session_state['df_resultado']
     if isinstance(resultado, pd.DataFrame):
         if resultado.empty:
-            st.info("Processamento concluído. Nenhuma conta correspondente foi encontrada entre os dois arquivos para gerar um relatório.")
+            st.info("Processamento concluído. Nenhuma conta correspondente foi encontrada entre os arquivos para gerar um relatório.")
         else:
             st.header("Resultado da Conciliação Consolidada")
             df_para_mostrar = resultado[
@@ -249,7 +249,7 @@ if 'df_resultado' in st.session_state:
                 st.success("✅ Ótima notícia! Nenhuma divergência encontrada.")
             else:
                 st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-                formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in resultado.columns}
+                formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
                 st.dataframe(df_para_mostrar.style.format(formatter=formatters))
             st.header("Download do Relatório Completo")
             col1, col2, col3 = st.columns(3)
