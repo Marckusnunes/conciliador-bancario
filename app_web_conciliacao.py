@@ -13,8 +13,10 @@ def realizar_diagnostico(contabilidade_file, extrato_bb_path, extrato_cef_path):
     def extrair_chave_contabil(texto_conta):
         if isinstance(texto_conta, str):
             numeric_part = re.sub(r'\D', '', texto_conta)
-            if len(numeric_part) > 7: return numeric_part[7:]
-            return numeric_part
+            if len(numeric_part) > 7:
+                # MUDANÇA: Remove os zeros à esquerda
+                return numeric_part[7:].lstrip('0')
+            return numeric_part.lstrip('0')
         return None
         
     df_contabil['Chave Primaria'] = df_contabil['Domicílio bancário'].apply(extrair_chave_contabil)
@@ -28,7 +30,8 @@ def realizar_diagnostico(contabilidade_file, extrato_bb_path, extrato_cef_path):
     try:
         df_bb = pd.read_excel(extrato_bb_path, engine='openpyxl', sheet_name='Table 1')
         df_bb.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
-        df_bb['Chave Primaria'] = df_bb['Conta'].astype(str).apply(lambda x: re.sub(r'\D', '', x))
+        # MUDANÇA: Remove os zeros à esquerda
+        df_bb['Chave Primaria'] = df_bb['Conta'].astype(str).apply(lambda x: re.sub(r'\D', '', x).lstrip('0'))
         extratos_encontrados.append(df_bb[['Conta', 'Titular', 'Chave Primaria']])
         st.info("Extrato do Banco do Brasil processado.")
     except FileNotFoundError:
@@ -50,10 +53,11 @@ def realizar_diagnostico(contabilidade_file, extrato_bb_path, extrato_cef_path):
             def extrair_chave_cef(texto_conta):
                 if isinstance(texto_conta, str):
                     numeric_part = re.sub(r'\D', '', texto_conta)
-                    if len(numeric_part) > 4: return numeric_part[4:]
+                    if len(numeric_part) > 4:
+                        # MUDANÇA: Remove os zeros à esquerda
+                        return numeric_part[4:].lstrip('0')
                 return None
             df_cef['Chave Primaria'] = df_cef['Conta Vinculada'].apply(extrair_chave_cef)
-            # MUDANÇA: Renomeia 'Conta Vinculada' para 'Conta' e 'Nome' para 'Titular' para padronizar
             df_cef.rename(columns={'Conta Vinculada': 'Conta', 'Nome': 'Titular'}, inplace=True)
             extratos_encontrados.append(df_cef[['Conta', 'Titular', 'Chave Primaria']])
             st.info("Extrato da Caixa (.cef) processado.")
