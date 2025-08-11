@@ -3,7 +3,6 @@ import pandas as pd
 import re
 import io
 import numpy as np
-import csv
 from fpdf import FPDF
 from datetime import datetime
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
@@ -12,15 +11,15 @@ from openpyxl.utils import get_column_letter
 # --- Bloco 1: Lógica Principal da Conciliação ---
 
 def processar_relatorio_contabil(arquivo_carregado):
-    """Lê o relatório contábil bruto e aplica a lógica de chave primária do utilizador."""
-    st.info("A processar Relatório Contábil...")
+    """Lê o relatório contábil bruto e aplica a nova lógica de extração de chave."""
+    st.info("Processando Relatório Contábil...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
     
-    # LÓGICA DO UTILIZADOR RESTAURADA:
     def extrair_chave_contabil(texto_conta):
         if isinstance(texto_conta, str):
             numeric_part = re.sub(r'\D', '', texto_conta)
             if len(numeric_part) > 7:
+                # Remove os 7 primeiros dígitos e os zeros à esquerda
                 return numeric_part[7:].lstrip('0')
             return numeric_part.lstrip('0')
         return None
@@ -73,11 +72,11 @@ def processar_extrato_cef_bruto(caminho_arquivo):
     data_io = io.StringIO("".join(cef_content[header_line_index:]))
     df = pd.read_csv(data_io, sep=';')
     
-    # LÓGICA DO UTILIZADOR RESTAURADA:
     def extrair_chave_cef(texto_conta):
         if isinstance(texto_conta, str):
             numeric_part = re.sub(r'\D', '', texto_conta)
             if len(numeric_part) > 4:
+                # Remove os 4 primeiros dígitos e os zeros à esquerda
                 return numeric_part[4:].lstrip('0')
         return None
     
@@ -100,7 +99,6 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
         'Saldo_Aplicado_Extrato': 'sum'
     }).reset_index()
 
-    # Garante que a chave de junção seja do mesmo tipo (string)
     df_contabil_pivot['Chave Primaria'] = df_contabil_pivot['Chave Primaria'].astype(str)
     df_extrato_pivot['Chave Primaria'] = df_extrato_pivot['Chave Primaria'].astype(str)
 
@@ -275,6 +273,7 @@ if 'df_resultado' in st.session_state:
             if 'audit_contabil' in st.session_state and st.session_state['audit_contabil'] is not None:
                 st.dataframe(st.session_state['audit_contabil'])
             
-            st.subheader("Dados Extraídos dos Extratos Bancários (Unificados)")
+            st.subheader("Dados Extraídos dos Extratos Bancários (Unificados e Prontos para Conciliação)")
             if 'audit_extrato' in st.session_state and st.session_state['audit_extrato'] is not None:
                 st.dataframe(st.session_state['audit_extrato'])
+
