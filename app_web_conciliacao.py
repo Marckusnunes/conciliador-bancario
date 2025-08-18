@@ -9,13 +9,27 @@ from openpyxl.utils import get_column_letter
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
 
+def gerar_chave_padronizada(texto_conta):
+    """
+    Padroniza a criação da chave primária:
+    1. Extrai apenas os dígitos.
+    2. Pega os últimos 14 dígitos.
+    3. Remove os zeros à esquerda.
+    """
+    if isinstance(texto_conta, str):
+        parte_numerica = re.sub(r'\D', '', texto_conta)
+        ultimos_14_digitos = parte_numerica[-14:]
+        return ultimos_14_digitos.lstrip('0')
+    return None
+
 def carregar_depara():
     """Carrega o arquivo DE-PARA do repositório."""
     try:
         df_depara = pd.read_excel("depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx", sheet_name="2025_JUNHO (2)")
         df_depara.columns = ['Conta Antiga', 'Conta Nova']
-        df_depara['Chave Antiga'] = df_depara['Conta Antiga'].astype(str).apply(lambda x: re.sub(r'\D', '', x).lstrip('0'))
-        df_depara['Chave Nova'] = df_depara['Conta Nova'].astype(str).apply(lambda x: re.sub(r'\D', '', x).lstrip('0'))
+        # Aplica a mesma padronização de chave no arquivo DE-PARA
+        df_depara['Chave Antiga'] = df_depara['Conta Antiga'].apply(gerar_chave_padronizada)
+        df_depara['Chave Nova'] = df_depara['Conta Nova'].apply(gerar_chave_padronizada)
         st.info("Arquivo DE-PARA carregado e processado com sucesso.")
         return df_depara[['Chave Antiga', 'Chave Nova']]
     except FileNotFoundError:
@@ -27,15 +41,7 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
     st.info("A processar Relatório Contabilístico...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
     
-    def extrair_chave_contabil(texto_conta):
-        if isinstance(texto_conta, str):
-            numeric_part = re.sub(r'\D', '', texto_conta)
-            if len(numeric_part) > 7:
-                return numeric_part[7:].lstrip('0')
-            return numeric_part.lstrip('0')
-        return None
-        
-    df['Chave Primaria'] = df['Domicílio bancário'].apply(extrair_chave_contabil)
+    df['Chave Primaria'] = df['Domicílio bancário'].apply(gerar_chave_padronizada)
     df.dropna(subset=['Chave Primaria'], inplace=True)
     df = df[df['Chave Primaria'] != '']
 
@@ -72,11 +78,9 @@ def processar_extrato_bb_bruto(caminho_arquivo):
     df = pd.read_csv(caminho_arquivo, sep=';', header=None, encoding='latin-1', dtype=str)
     df = df.iloc[:, [1, 2, 3, 5]].copy()
     df.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']
-    def extrair_chave_bb(texto_conta):
-        if isinstance(texto_conta, str):
-            return re.sub(r'\D', '', texto_conta).lstrip('0')
-        return None
-    df['Chave Primaria'] = df['Conta'].apply(extrair_chave_bb)
+    
+    df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
+    
     def formatar_saldo_bbt(valor):
         valor_str = str(valor)
         valor_limpo = re.sub(r'\D', '', valor_str)
@@ -102,13 +106,9 @@ def processar_extrato_cef_bruto(caminho_arquivo):
     if header_line_index == -1: return pd.DataFrame()
     data_io = io.StringIO("".join(cef_content[header_line_index:]))
     df = pd.read_csv(data_io, sep=';')
-    def extrair_chave_cef(texto_conta):
-        if isinstance(texto_conta, str):
-            numeric_part = re.sub(r'\D', '', texto_conta)
-            if len(numeric_part) > 4:
-                return numeric_part[4:].lstrip('0')
-        return None
-    df['Chave Primaria'] = df['Conta Vinculada'].apply(extrair_chave_cef)
+
+    df['Chave Primaria'] = df['Conta Vinculada'].apply(gerar_chave_padronizada)
+
     df.rename(columns={
         'Saldo Conta Corrente (R$)': 'Saldo_Corrente_Extrato',
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
@@ -196,7 +196,7 @@ class PDF(FPDF):
 def create_pdf(df):
     pdf = PDF('L', 'mm', 'A4'); pdf.add_page(); pdf.create_table(df); return bytes(pdf.output())
 
-# --- Bloco 3: Interface Web com Streamlit ---
+# --- Bloco 3: Interface Web com Streamlit (Sem alterações) ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide", page_icon="🏦")
 st.title("🏦 Prefeitura da Cidade do Rio de Janeiro"); st.header("Controladoria Geral do Município"); st.markdown("---"); st.subheader("Conciliação de Saldos Bancários e Contábeis")
 
@@ -281,9 +281,9 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
                 st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
         st.markdown("---")
         with st.expander("Clique aqui para auditar os dados de origem"):
-            st.subheader("Dados Extraídos do Relatório Contábil (Com DE-PARA aplicado)")
+            st.subheader("Dados Extraídos do Relatório Contábil (Com DE-PARA e chave padronizada)")
             if 'audit_contabil' in st.session_state and st.session_state['audit_contabil'] is not None:
                 st.dataframe(st.session_state['audit_contabil'])
-            st.subheader("Dados Extraídos dos Extratos Bancários (Unificados)")
+            st.subheader("Dados Extraídos dos Extratos Bancários (Unificados e com chave padronizada)")
             if 'audit_extrato' in st.session_state and st.session_state['audit_extrato'] is not None:
                 st.dataframe(st.session_state['audit_extrato'])
