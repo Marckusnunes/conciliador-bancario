@@ -12,7 +12,6 @@ from openpyxl.utils import get_column_letter
 # --- Bloco 1: Lógica Principal da Conciliação ---
 
 def processar_relatorio_contabil(arquivo_carregado):
-    """Lê o relatório contabilístico bruto (CSV) e aplica a lógica de chave primária do utilizador."""
     st.info("A processar Relatório Contabilístico...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
     
@@ -45,61 +44,43 @@ def processar_relatorio_contabil(arquivo_carregado):
     return df_final
 
 def processar_extrato_bb_bruto(caminho_arquivo):
-    """Lê e transforma o arquivo .bbt bruto do Banco do Brasil."""
     df = pd.read_csv(caminho_arquivo, sep=';', header=None, encoding='latin-1')
-    
     df = df.iloc[:, [1, 2, 3, 5]].copy()
     df.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']
-
     def extrair_chave_bb(texto_conta):
         if isinstance(texto_conta, str):
             return re.sub(r'\D', '', texto_conta).lstrip('0')
         return None
-    
     df['Chave Primaria'] = df['Conta'].apply(extrair_chave_bb)
-
     def formatar_saldo_bbt(valor):
         if isinstance(valor, str):
             valor_limpo = re.sub(r'\D', '', valor)
             if len(valor_limpo) > 2:
                 return f"{valor_limpo[:-2]}.{valor_limpo[-2:]}"
         return 0
-
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         df[col] = pd.to_numeric(df[col].apply(formatar_saldo_bbt), errors='coerce').fillna(0)
-        
     return df
 
 def processar_extrato_cef_bruto(caminho_arquivo):
-    """Lê o arquivo .cef da Caixa e aplica a nova lógica de extração de chave."""
     with open(caminho_arquivo, 'r', encoding='latin-1') as f:
         cef_content = f.readlines()
-
     header_line_index = -1
     for i, line in enumerate(cef_content):
         if line.strip().startswith("Conta Vinculada;"):
             header_line_index = i
             break
-    
     if header_line_index == -1: return pd.DataFrame()
-
     data_io = io.StringIO("".join(cef_content[header_line_index:]))
     df = pd.read_csv(data_io, sep=';')
-    
     def extrair_chave_cef(texto_conta):
         if isinstance(texto_conta, str):
             numeric_part = re.sub(r'\D', '', texto_conta)
             if len(numeric_part) > 4:
                 return numeric_part[4:].lstrip('0')
         return None
-    
     df['Chave Primaria'] = df['Conta Vinculada'].apply(extrair_chave_cef)
-    
-    df.rename(columns={
-        'Saldo Conta Corrente (R$)': 'Saldo_Corrente_Extrato',
-        'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
-    }, inplace=True)
-
+    df.rename(columns={'Saldo Conta Corrente (R$)': 'Saldo_Corrente_Extrato','Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'}, inplace=True)
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
@@ -107,22 +88,14 @@ def processar_extrato_cef_bruto(caminho_arquivo):
 
 def realizar_conciliacao(df_contabil, df_extrato_unificado):
     df_contabil_pivot = df_contabil[['Chave Primaria', 'Domicílio bancário', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
-    df_extrato_pivot = df_extrato_unificado.groupby('Chave Primaria').agg({
-        'Saldo_Corrente_Extrato': 'sum',
-        'Saldo_Aplicado_Extrato': 'sum'
-    }).reset_index()
-
-    # Garante que a chave de junção seja do mesmo tipo (string)
+    df_extrato_pivot = df_extrato_unificado.groupby('Chave Primaria').agg({'Saldo_Corrente_Extrato': 'sum','Saldo_Aplicado_Extrato': 'sum'}).reset_index()
     df_contabil_pivot['Chave Primaria'] = df_contabil_pivot['Chave Primaria'].astype(str)
     df_extrato_pivot['Chave Primaria'] = df_extrato_pivot['Chave Primaria'].astype(str)
-
     df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Chave Primaria', how='inner')
     if df_final.empty: return pd.DataFrame()
-        
     df_final.rename(columns={'Domicílio bancário': 'Conta Bancária'}, inplace=True)
     df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
-    
     df_final = df_final.set_index('Conta Bancária')
     df_final = df_final[['Saldo_Corrente_Contabil', 'Saldo_Corrente_Extrato', 'Diferenca_Movimento','Saldo_Aplicado_Contabil', 'Saldo_Aplicado_Extrato', 'Diferenca_Aplicacao']]
     df_final.columns = pd.MultiIndex.from_tuples([
@@ -218,17 +191,19 @@ if st.sidebar.button("Conciliar Agora"):
                 
                 extratos_encontrados = []
                 df_bb, df_cef = None, None
+                
+                caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.bbt"
+                st.info(f"A procurar por: {caminho_bb}") # MENSAGEM DE DEPURAÇÃO
                 try:
-                    # MUDANÇA: Procura pelo arquivo .bbt do BB
-                    caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.bbt"
                     df_bb = processar_extrato_bb_bruto(caminho_bb)
                     extratos_encontrados.append(df_bb)
                     st.info(f"Extrato do Banco do Brasil (.bbt) para {st.session_state.mes_selecionado} carregado.")
                 except FileNotFoundError:
                     st.warning(f"Aviso: Extrato do BB (.bbt) para {st.session_state.mes_selecionado} não encontrado.")
                 
+                caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
+                st.info(f"A procurar por: {caminho_cef}") # MENSAGEM DE DEPURAÇÃO
                 try:
-                    caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
                     df_cef = processar_extrato_cef_bruto(caminho_cef)
                     extratos_encontrados.append(df_cef)
                     st.info(f"Extrato da Caixa Econômica (.cef) para {st.session_state.mes_selecionado} carregado.")
