@@ -44,64 +44,43 @@ def processar_relatorio_contabil(arquivo_carregado):
     return df_final
 
 def processar_extrato_bb_bruto(caminho_arquivo):
-    """Lê e transforma o arquivo .bbt bruto do Banco do Brasil."""
     df = pd.read_csv(caminho_arquivo, sep=';', header=None, encoding='latin-1')
-    
     df = df.iloc[:, [1, 2, 3, 5]].copy()
     df.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']
-
     def extrair_chave_bb(texto_conta):
         if isinstance(texto_conta, str):
             return re.sub(r'\D', '', texto_conta).lstrip('0')
         return None
-    
     df['Chave Primaria'] = df['Conta'].apply(extrair_chave_bb)
-
-    # MUDANÇA: Função de formatação de saldo mais robusta
     def formatar_saldo_bbt(valor):
-        valor_str = str(valor) # Converte para string primeiro
-        valor_limpo = re.sub(r'\D', '', valor_str)
-        if len(valor_limpo) > 2:
-            return float(f"{valor_limpo[:-2]}.{valor_limpo[-2:]}")
-        elif valor_limpo:
-             return float(f"0.{valor_limpo}")
-        return 0.0
-
+        if isinstance(valor, str):
+            valor_limpo = re.sub(r'\D', '', valor)
+            if len(valor_limpo) > 2:
+                return f"{valor_limpo[:-2]}.{valor_limpo[-2:]}"
+        return 0
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
-        df[col] = df[col].apply(formatar_saldo_bbt)
-        
+        df[col] = pd.to_numeric(df[col].apply(formatar_saldo_bbt), errors='coerce').fillna(0)
     return df
 
 def processar_extrato_cef_bruto(caminho_arquivo):
-    """Lê o arquivo .cef da Caixa e aplica a nova lógica de extração de chave."""
     with open(caminho_arquivo, 'r', encoding='latin-1') as f:
         cef_content = f.readlines()
-
     header_line_index = -1
     for i, line in enumerate(cef_content):
         if line.strip().startswith("Conta Vinculada;"):
             header_line_index = i
             break
-    
     if header_line_index == -1: return pd.DataFrame()
-
     data_io = io.StringIO("".join(cef_content[header_line_index:]))
     df = pd.read_csv(data_io, sep=';')
-    
     def extrair_chave_cef(texto_conta):
         if isinstance(texto_conta, str):
             numeric_part = re.sub(r'\D', '', texto_conta)
             if len(numeric_part) > 4:
                 return numeric_part[4:].lstrip('0')
         return None
-    
     df['Chave Primaria'] = df['Conta Vinculada'].apply(extrair_chave_cef)
-    
-    df.rename(columns={
-        'Saldo Conta Corrente (R$)': 'Saldo_Corrente_Extrato',
-        'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
-    }, inplace=True)
-
+    df.rename(columns={'Saldo Conta Corrente (R$)': 'Saldo_Corrente_Extrato','Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'}, inplace=True)
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
@@ -110,8 +89,7 @@ def processar_extrato_cef_bruto(caminho_arquivo):
 def realizar_conciliacao(df_contabil, df_extrato_unificado):
     df_contabil_pivot = df_contabil[['Chave Primaria', 'Domicílio bancário', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
     df_extrato_pivot = df_extrato_unificado.groupby('Chave Primaria').agg({
-        'Saldo_Corrente_Extrato': 'sum',
-        'Saldo_Aplicado_Extrato': 'sum'
+        'Saldo_Corrente_Extrato': 'sum','Saldo_Aplicado_Extrato': 'sum'
     }).reset_index()
 
     df_contabil_pivot['Chave Primaria'] = df_contabil_pivot['Chave Primaria'].astype(str)
@@ -262,17 +240,14 @@ if 'df_resultado' in st.session_state:
             st.info("Processamento concluído. Nenhuma conta correspondente foi encontrada entre os dois arquivos para gerar um relatório.")
         else:
             st.header("Resultado da Conciliação Consolidada")
-            df_para_mostrar = resultado[
-                (resultado[('Conta Movimento', 'Diferença')].abs() > 0.01) | 
-                (resultado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)
-            ].copy()
             
-            if df_para_mostrar.empty:
-                st.success("✅ Ótima notícia! Nenhuma divergência encontrada.")
-            else:
-                st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-                formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in resultado.columns}
-                st.dataframe(df_para_mostrar.style.format(formatter=formatters))
+            # MUDANÇA: O filtro foi removido daqui. df_para_mostrar agora é a tabela completa.
+            df_para_mostrar = resultado.copy()
+            
+            st.write("A tabela abaixo mostra todas as contas correspondentes encontradas.")
+            formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
+            st.dataframe(df_para_mostrar.style.format(formatter=formatters))
+
             st.header("Download do Relatório Completo")
             col1, col2, col3 = st.columns(3)
             with col1:
