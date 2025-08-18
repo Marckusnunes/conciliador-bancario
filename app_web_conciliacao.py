@@ -196,7 +196,7 @@ if st.sidebar.button("Conciliar Agora"):
 
                 extratos_encontrados = []
                 try:
-                    caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.xlsx"
+                    caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.bbt"
                     df_bb = processar_extrato_bb(caminho_bb)
                     extratos_encontrados.append(df_bb)
                     st.info(f"Extrato do Banco do Brasil para {st.session_state.mes_selecionado} carregado.")
@@ -204,7 +204,7 @@ if st.sidebar.button("Conciliar Agora"):
                     st.warning(f"Aviso: Extrato do BB para {st.session_state.mes_selecionado} não encontrado.")
                 
                 try:
-                    caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.xlsx"
+                    caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
                     df_cef = processar_extrato_cef(caminho_cef)
                     extratos_encontrados.append(df_cef)
                     st.info(f"Extrato da Caixa Econômica para {st.session_state.mes_selecionado} carregado.")
@@ -253,3 +253,4 @@ if 'df_resultado' in st.session_state:
                 st.download_button("Baixar em Excel", to_excel(resultado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
             with col3:
                 st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
+
