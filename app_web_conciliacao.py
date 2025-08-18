@@ -23,49 +23,37 @@ def gerar_chave_padronizada(texto_conta):
     return None
 
 def carregar_depara():
-    """Prepara o DE-PARA com chaves de busca e chaves de resultado."""
+    """Carrega o arquivo DE-PARA e padroniza as chaves."""
     try:
         df_depara = pd.read_excel("depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx", sheet_name="2025_JUNHO (2)")
         df_depara.columns = ['Conta Antiga', 'Conta Nova']
-        # Cria um 'termo de busca' apenas com os números da conta antiga
-        df_depara['Termo de Busca'] = df_depara['Conta Antiga'].astype(str).apply(lambda x: re.sub(r'\D', '', x))
-        # A 'Conta Nova' é padronizada para o formato final
-        df_depara['Chave Nova Padronizada'] = df_depara['Conta Nova'].apply(gerar_chave_padronizada)
+        # Aplica a padronização em ambas as colunas para criar chaves consistentes
+        df_depara['Chave Antiga'] = df_depara['Conta Antiga'].apply(gerar_chave_padronizada)
+        df_depara['Chave Nova'] = df_depara['Conta Nova'].apply(gerar_chave_padronizada)
         st.info("Arquivo DE-PARA carregado e processado com sucesso.")
-        # Retorna apenas as colunas necessárias, removendo as que não têm termo de busca
-        return df_depara[['Termo de Busca', 'Chave Nova Padronizada']].dropna()
+        return df_depara[['Chave Antiga', 'Chave Nova']].dropna()
     except FileNotFoundError:
         st.warning("Aviso: Arquivo DE-PARA 'depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx' não encontrado. A tradução de contas não será aplicada.")
         return pd.DataFrame()
 
 def processar_relatorio_contabil(arquivo_carregado, df_depara):
-    """Lê o relatório contábil e aplica a tradução DE-PARA por busca."""
+    """Lê o relatório contábil e aplica a tradução DE-PARA."""
     st.info("A processar Relatório Contabilístico...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
     
-    # Limpa o campo de domicílio bancário para ter apenas números
-    df['Domicilio Numerico'] = df['Domicílio bancário'].astype(str).apply(lambda x: re.sub(r'\D', '', x))
-    df['Chave Primaria'] = None # Inicia a coluna de chave primária vazia
-
-    if not df_depara.empty:
-        st.info("A aplicar tradução de contas DE-PARA no relatório contábil...")
-        # Itera sobre cada regra do DE-PARA
-        for index, row in df_depara.iterrows():
-            termo_busca = row['Termo de Busca']
-            chave_nova = row['Chave Nova Padronizada']
-            # Encontra as linhas no relatório contábil que contêm o termo de busca
-            if termo_busca: # Garante que o termo de busca não está vazio
-                mask = df['Domicilio Numerico'].str.contains(termo_busca, na=False)
-                # Para as linhas encontradas, atribui a Chave Nova à Chave Primaria
-                df.loc[mask, 'Chave Primaria'] = chave_nova
-    
-    # Para todas as linhas que NÃO foram traduzidas pelo DE-PARA, aplica a regra padrão
-    linhas_nao_traduzidas = df['Chave Primaria'].isnull()
-    df.loc[linhas_nao_traduzidas, 'Chave Primaria'] = df.loc[linhas_nao_traduzidas, 'Domicílio bancário'].apply(gerar_chave_padronizada)
-
-    df.drop(columns=['Domicilio Numerico'], inplace=True)
+    # Gera a chave primária inicial usando a regra padrão
+    df['Chave Primaria'] = df['Domicílio bancário'].apply(gerar_chave_padronizada)
     df.dropna(subset=['Chave Primaria'], inplace=True)
     df = df[df['Chave Primaria'] != '']
+
+    # Usa a abordagem de MERGE, que é mais robusta e eficiente
+    if not df_depara.empty:
+        st.info("A aplicar tradução de contas DE-PARA no relatório contábil...")
+        df = pd.merge(df, df_depara, left_on='Chave Primaria', right_on='Chave Antiga', how='left')
+        # Se encontrou uma Chave Nova, usa-a. Se não, mantém a Chave Primaria original.
+        df['Chave Primaria'] = df['Chave Nova'].fillna(df['Chave Primaria'])
+        # Limpa as colunas auxiliares do merge
+        df.drop(columns=['Chave Antiga', 'Chave Nova'], inplace=True)
     
     # O resto da função continua igual
     df['Saldo Final'] = pd.to_numeric(
@@ -299,7 +287,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
                 st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
         st.markdown("---")
         with st.expander("Clique aqui para auditar os dados de origem"):
-            st.subheader("Auditoria do Arquivo DE-PARA (Termos de Busca)")
+            st.subheader("Auditoria do Arquivo DE-PARA (Após Padronização)")
             if 'audit_depara' in st.session_state and st.session_state['audit_depara'] is not None:
                 st.dataframe(st.session_state['audit_depara'])
             
