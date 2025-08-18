@@ -3,7 +3,6 @@ import pandas as pd
 import re
 import io
 import numpy as np
-import csv
 from fpdf import FPDF
 from datetime import datetime
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
@@ -12,7 +11,7 @@ from openpyxl.utils import get_column_letter
 # --- Bloco 1: Lógica Principal da Conciliação ---
 
 def processar_relatorio_contabil(arquivo_carregado):
-    """Lê o relatório contábil bruto e aplica a nova lógica de extração de chave."""
+    """Lê o relatório contábil bruto (CSV) e aplica a lógica de chave primária do utilizador."""
     st.info("A processar Relatório Contábil...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
     
@@ -44,20 +43,36 @@ def processar_relatorio_contabil(arquivo_carregado):
     
     return df_final
 
-def processar_extrato_bb(caminho_arquivo):
-    df = pd.read_excel(caminho_arquivo, engine='openpyxl', sheet_name='Table 1')
-    if len(df.columns) == 7:
-        df.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato', 'Vazio']
-        df = df.drop(columns=['Vazio'])
-    else:
-        df.columns = ['Agencia', 'Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Cta_Invest_Extrato', 'Saldo_Aplicado_Extrato']
-    for col in df.columns:
-        if 'Saldo' in col: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+def processar_extrato_bb_bruto(caminho_arquivo):
+    """Lê e transforma o arquivo .bbt bruto do Banco do Brasil."""
+    # O arquivo .bbt parece ser um CSV separado por ';'
+    df = pd.read_csv(caminho_arquivo, sep=';', header=None, encoding='latin-1')
     
-    df['Chave Primaria'] = df['Conta'].astype(str).apply(lambda x: re.sub(r'\D', '', x).lstrip('0'))
+    # Seleciona as colunas de interesse
+    df = df.iloc[:, [1, 2, 3, 5]].copy()
+    df.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']
+
+    def extrair_chave_bb(texto_conta):
+        if isinstance(texto_conta, str):
+            return re.sub(r'\D', '', texto_conta).lstrip('0')
+        return None
+    
+    df['Chave Primaria'] = df['Conta'].apply(extrair_chave_bb)
+
+    def formatar_saldo_bbt(valor):
+        if isinstance(valor, str):
+            valor_limpo = re.sub(r'\D', '', valor)
+            if len(valor_limpo) > 2:
+                return f"{valor_limpo[:-2]}.{valor_limpo[-2:]}"
+        return 0
+
+    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
+        df[col] = pd.to_numeric(df[col].apply(formatar_saldo_bbt), errors='coerce').fillna(0)
+        
     return df
 
 def processar_extrato_cef_bruto(caminho_arquivo):
+    """Lê o arquivo .cef da Caixa e aplica a nova lógica de extração de chave."""
     with open(caminho_arquivo, 'r', encoding='latin-1') as f:
         cef_content = f.readlines()
 
@@ -98,6 +113,7 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
         'Saldo_Aplicado_Extrato': 'sum'
     }).reset_index()
 
+    # Garante que a chave de junção seja do mesmo tipo (string)
     df_contabil_pivot['Chave Primaria'] = df_contabil_pivot['Chave Primaria'].astype(str)
     df_extrato_pivot['Chave Primaria'] = df_extrato_pivot['Chave Primaria'].astype(str)
 
@@ -204,12 +220,12 @@ if st.sidebar.button("Conciliar Agora"):
                 extratos_encontrados = []
                 df_bb, df_cef = None, None
                 try:
-                    caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.xlsx"
-                    df_bb = processar_extrato_bb(caminho_bb)
+                    caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.bbt"
+                    df_bb = processar_extrato_bb_bruto(caminho_bb)
                     extratos_encontrados.append(df_bb)
-                    st.info(f"Extrato do Banco do Brasil para {st.session_state.mes_selecionado} carregado.")
+                    st.info(f"Extrato do Banco do Brasil (.bbt) para {st.session_state.mes_selecionado} carregado.")
                 except FileNotFoundError:
-                    st.warning(f"Aviso: Extrato do BB para {st.session_state.mes_selecionado} não encontrado.")
+                    st.warning(f"Aviso: Extrato do BB (.bbt) para {st.session_state.mes_selecionado} não encontrado.")
                 
                 try:
                     caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
@@ -256,25 +272,7 @@ if 'df_resultado' in st.session_state:
             else:
                 st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
                 formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in resultado.columns}
-                # --- Início do Bloco para Substituir ---
-
-            # Função para colorir as diferenças que não são zero
-            def colorir_diferencas(valor):
-                if valor != 0:
-                    return 'color: red'
-                else:
-                    return '' # Sem estilo para valores zero
-
-            # Formatação dos números para o padrão brasileiro (a mesma de antes)
-            formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in df_para_mostrar.columns}
-
-            # Aplica o estilo de cor PRIMEIRO, e a formatação de texto DEPOIS
-            st.dataframe(df_para_mostrar.style
-                .applymap(colorir_diferencas, subset=[('Conta Movimento', 'Diferença'), ('Aplicação Financeira', 'Diferença')])
-                .format(formatter=formatters)
-            )
-            
-            # --- Fim do Bloco para Substituir ---
+                st.dataframe(df_para_mostrar.style.format(formatter=formatters))
             st.header("Download do Relatório Completo")
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -293,25 +291,3 @@ if 'df_resultado' in st.session_state:
             st.subheader("Dados Extraídos dos Extratos Bancários (Unificados)")
             if 'audit_extrato' in st.session_state and st.session_state['audit_extrato'] is not None:
                 st.dataframe(st.session_state['audit_extrato'])
-            
-            # MUDANÇA: Adiciona a tabela de chaves correspondentes
-            st.subheader("Contas Correspondentes Encontradas (Chaves em Comum)")
-            if ('audit_contabil' in st.session_state and st.session_state['audit_contabil'] is not None and
-                'audit_extrato' in st.session_state and st.session_state['audit_extrato'] is not None):
-                
-                df_c = st.session_state['audit_contabil']
-                df_e = st.session_state['audit_extrato']
-                
-                # Garante que a coluna 'Chave Primaria' exista antes de tentar o merge
-                if 'Chave Primaria' in df_c.columns and 'Chave Primaria' in df_e.columns:
-                    df_c['Chave Primaria'] = df_c['Chave Primaria'].astype(str)
-                    df_e['Chave Primaria'] = df_e['Chave Primaria'].astype(str)
-                    chaves_comuns = pd.merge(
-                        df_c[['Chave Primaria', 'Domicílio bancário']],
-                        df_e[['Chave Primaria']],
-                        on='Chave Primaria',
-                        how='inner'
-                    )
-                    st.dataframe(chaves_comuns)
-
-
