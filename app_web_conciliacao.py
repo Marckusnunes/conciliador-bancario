@@ -12,7 +12,7 @@ from openpyxl.utils import get_column_letter
 # --- Bloco 1: Lógica Principal da Conciliação ---
 
 def processar_relatorio_contabil(arquivo_carregado):
-    """Lê o relatório contábil bruto (CSV) e aplica a lógica de chave primária do utilizador."""
+    """Lê o relatório contabilístico bruto (CSV) e aplica a lógica de chave primária do utilizador."""
     st.info("A processar Relatório Contabilístico...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
     
@@ -219,6 +219,7 @@ if st.sidebar.button("Conciliar Agora"):
                 extratos_encontrados = []
                 df_bb, df_cef = None, None
                 try:
+                    # MUDANÇA: Procura pelo arquivo .bbt do BB
                     caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.bbt"
                     df_bb = processar_extrato_bb_bruto(caminho_bb)
                     extratos_encontrados.append(df_bb)
