@@ -13,19 +13,19 @@ from openpyxl.utils import get_column_letter
 def carregar_depara():
     """Carrega o arquivo DE-PARA do repositório."""
     try:
-        # O arquivo DE-PARA deve estar na pasta 'depara' no GitHub
         df_depara = pd.read_excel("depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx", sheet_name="2025_JUNHO (2)")
         df_depara.columns = ['Conta Antiga', 'Conta Nova']
         # Limpa as chaves para garantir a correspondência
         df_depara['Chave Antiga'] = df_depara['Conta Antiga'].astype(str).apply(lambda x: re.sub(r'\D', '', x).lstrip('0'))
         df_depara['Chave Nova'] = df_depara['Conta Nova'].astype(str).apply(lambda x: re.sub(r'\D', '', x).lstrip('0'))
+        st.info("Arquivo DE-PARA carregado e processado com sucesso.")
         return df_depara[['Chave Antiga', 'Chave Nova']]
     except FileNotFoundError:
         st.warning("Aviso: Arquivo DE-PARA 'depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx' não encontrado. A tradução de contas da CEF não será aplicada.")
         return pd.DataFrame()
 
 def processar_relatorio_contabil(arquivo_carregado, df_depara):
-    """Lê o relatório contabilístico bruto e aplica a nova lógica de extração de chave."""
+    """Lê o relatório contabilístico bruto (CSV) e aplica a nova lógica de extração de chave."""
     st.info("A processar Relatório Contabilístico...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
     
@@ -43,8 +43,8 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
     
     # --- Lógica DE-PARA aplicada aqui ---
     if not df_depara.empty:
+        st.info("A aplicar tradução de contas DE-PARA...")
         df = pd.merge(df, df_depara, left_on='Chave Primaria', right_on='Chave Antiga', how='left')
-        # Se encontrou uma 'Conta Nova', usa-a como chave; senão, mantém a antiga.
         df['Chave Primaria Final'] = df['Chave Nova'].fillna(df['Chave Primaria'])
     else:
         df['Chave Primaria Final'] = df['Chave Primaria']
