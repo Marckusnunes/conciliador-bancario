@@ -219,7 +219,7 @@ if st.sidebar.button("Conciliar Agora"):
                 mes_ano = f"{partes_mes[0]}_{partes_mes[1]}"
                 
                 df_depara = carregar_depara()
-                st.session_state['audit_depara'] = df_depara # Adicionado para auditoria
+                st.session_state['audit_depara'] = df_depara
                 
                 extratos_encontrados = []
                 try:
@@ -269,8 +269,10 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
                 st.success("✅ Ótima notícia! Nenhuma divergência encontrada.")
             else:
                 st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
+                # A variável 'formatters' é definida aqui
                 formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in resultado.columns}
-                st.dataframe(df_para_mostrar.style.format(formatter=formatter))
+                # E usada corretamente aqui (com 's')
+                st.dataframe(df_para_mostrar.style.format(formatter=formatters))
             st.header("Download do Relatório Completo")
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -285,7 +287,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.write("Verifique se as chaves antigas e novas são diferentes. Se forem iguais, a tradução não terá efeito.")
             if 'audit_depara' in st.session_state and st.session_state['audit_depara'] is not None:
                 st.dataframe(st.session_state['audit_depara'])
-            
+
             st.subheader("Dados Extraídos do Relatório Contábil (Com DE-PARA e chave padronizada)")
             if 'audit_contabil' in st.session_state and st.session_state['audit_contabil'] is not None:
                 st.dataframe(st.session_state['audit_contabil'])
