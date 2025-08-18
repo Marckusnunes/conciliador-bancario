@@ -18,7 +18,7 @@ def gerar_chave_padronizada(texto_conta):
     """
     if isinstance(texto_conta, str):
         parte_numerica = re.sub(r'\D', '', texto_conta)
-        # Alterado de -8 para -5
+        # Mantendo a regra de 5 dígitos conforme solicitado
         ultimos_5_digitos = parte_numerica[-5:]
         return ultimos_5_digitos.lstrip('0').strip()
     return None
@@ -234,6 +234,7 @@ if st.sidebar.button("Conciliar Agora"):
                 mes_ano = f"{partes_mes[0]}_{partes_mes[1]}"
                 
                 df_depara = carregar_depara()
+                # Salva o DE-PARA processado para auditoria
                 st.session_state['audit_depara'] = df_depara
                 
                 extratos_encontrados = []
@@ -296,6 +297,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
                 st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
         st.markdown("---")
         with st.expander("Clique aqui para auditar os dados de origem"):
+            # Adicionada a tabela de auditoria para o DE-PARA
             st.subheader("Auditoria do Arquivo DE-PARA (Após Padronização)")
             if 'audit_depara' in st.session_state and st.session_state['audit_depara'] is not None:
                 st.dataframe(st.session_state['audit_depara'])
