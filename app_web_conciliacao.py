@@ -23,33 +23,51 @@ def gerar_chave_padronizada(texto_conta):
     return None
 
 def carregar_depara():
-    """Carrega o arquivo DE-PARA do repositório."""
+    """Prepara o DE-PARA com chaves de busca e chaves de resultado."""
     try:
         df_depara = pd.read_excel("depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx", sheet_name="2025_JUNHO (2)")
         df_depara.columns = ['Conta Antiga', 'Conta Nova']
-        df_depara['Chave Antiga'] = df_depara['Conta Antiga'].apply(gerar_chave_padronizada)
-        df_depara['Chave Nova'] = df_depara['Conta Nova'].apply(gerar_chave_padronizada)
+        # Cria um 'termo de busca' apenas com os números da conta antiga
+        df_depara['Termo de Busca'] = df_depara['Conta Antiga'].astype(str).apply(lambda x: re.sub(r'\D', '', x))
+        # A 'Conta Nova' é padronizada para o formato final
+        df_depara['Chave Nova Padronizada'] = df_depara['Conta Nova'].apply(gerar_chave_padronizada)
         st.info("Arquivo DE-PARA carregado e processado com sucesso.")
-        return df_depara[['Chave Antiga', 'Chave Nova']]
+        # Retorna apenas as colunas necessárias, removendo as que não têm termo de busca
+        return df_depara[['Termo de Busca', 'Chave Nova Padronizada']].dropna()
     except FileNotFoundError:
         st.warning("Aviso: Arquivo DE-PARA 'depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx' não encontrado. A tradução de contas não será aplicada.")
         return pd.DataFrame()
 
 def processar_relatorio_contabil(arquivo_carregado, df_depara):
-    """Lê o relatório contábil e aplica a tradução DE-PARA."""
+    """Lê o relatório contábil e aplica a tradução DE-PARA por busca."""
     st.info("A processar Relatório Contabilístico...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
     
-    df['Chave Primaria'] = df['Domicílio bancário'].apply(gerar_chave_padronizada)
-    df.dropna(subset=['Chave Primaria'], inplace=True)
-    df = df[df['Chave Primaria'] != '']
+    # Limpa o campo de domicílio bancário para ter apenas números
+    df['Domicilio Numerico'] = df['Domicílio bancário'].astype(str).apply(lambda x: re.sub(r'\D', '', x))
+    df['Chave Primaria'] = None # Inicia a coluna de chave primária vazia
 
     if not df_depara.empty:
         st.info("A aplicar tradução de contas DE-PARA no relatório contábil...")
-        df = pd.merge(df, df_depara, left_on='Chave Primaria', right_on='Chave Antiga', how='left')
-        df['Chave Primaria'] = df['Chave Nova'].fillna(df['Chave Primaria'])
-        df.drop(columns=['Chave Antiga', 'Chave Nova'], inplace=True)
+        # Itera sobre cada regra do DE-PARA
+        for index, row in df_depara.iterrows():
+            termo_busca = row['Termo de Busca']
+            chave_nova = row['Chave Nova Padronizada']
+            # Encontra as linhas no relatório contábil que contêm o termo de busca
+            if termo_busca: # Garante que o termo de busca não está vazio
+                mask = df['Domicilio Numerico'].str.contains(termo_busca, na=False)
+                # Para as linhas encontradas, atribui a Chave Nova à Chave Primaria
+                df.loc[mask, 'Chave Primaria'] = chave_nova
     
+    # Para todas as linhas que NÃO foram traduzidas pelo DE-PARA, aplica a regra padrão
+    linhas_nao_traduzidas = df['Chave Primaria'].isnull()
+    df.loc[linhas_nao_traduzidas, 'Chave Primaria'] = df.loc[linhas_nao_traduzidas, 'Domicílio bancário'].apply(gerar_chave_padronizada)
+
+    df.drop(columns=['Domicilio Numerico'], inplace=True)
+    df.dropna(subset=['Chave Primaria'], inplace=True)
+    df = df[df['Chave Primaria'] != '']
+    
+    # O resto da função continua igual
     df['Saldo Final'] = pd.to_numeric(
         df['Saldo Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
         errors='coerce'
@@ -269,9 +287,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
                 st.success("✅ Ótima notícia! Nenhuma divergência encontrada.")
             else:
                 st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-                # A variável 'formatters' é definida aqui
                 formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in resultado.columns}
-                # E usada corretamente aqui (com 's')
                 st.dataframe(df_para_mostrar.style.format(formatter=formatters))
             st.header("Download do Relatório Completo")
             col1, col2, col3 = st.columns(3)
@@ -283,11 +299,10 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
                 st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
         st.markdown("---")
         with st.expander("Clique aqui para auditar os dados de origem"):
-            st.subheader("Auditoria do Arquivo DE-PARA (Após Padronização)")
-            st.write("Verifique se as chaves antigas e novas são diferentes. Se forem iguais, a tradução não terá efeito.")
+            st.subheader("Auditoria do Arquivo DE-PARA (Termos de Busca)")
             if 'audit_depara' in st.session_state and st.session_state['audit_depara'] is not None:
                 st.dataframe(st.session_state['audit_depara'])
-
+            
             st.subheader("Dados Extraídos do Relatório Contábil (Com DE-PARA e chave padronizada)")
             if 'audit_contabil' in st.session_state and st.session_state['audit_contabil'] is not None:
                 st.dataframe(st.session_state['audit_contabil'])
