@@ -13,13 +13,14 @@ def gerar_chave_padronizada(texto_conta):
     """
     Padroniza a criação da chave primária:
     1. Extrai apenas os dígitos.
-    2. Pega os últimos 14 dígitos.
+    2. Pega os últimos 8 dígitos.
     3. Remove os zeros à esquerda.
     """
     if isinstance(texto_conta, str):
         parte_numerica = re.sub(r'\D', '', texto_conta)
-        ultimos_14_digitos = parte_numerica[-14:]
-        return ultimos_14_digitos.lstrip('0')
+        # Alterado de -14 para -8
+        ultimos_8_digitos = parte_numerica[-8:]
+        return ultimos_8_digitos.lstrip('0')
     return None
 
 def carregar_depara():
@@ -27,7 +28,6 @@ def carregar_depara():
     try:
         df_depara = pd.read_excel("depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx", sheet_name="2025_JUNHO (2)")
         df_depara.columns = ['Conta Antiga', 'Conta Nova']
-        # Aplica a mesma padronização de chave no arquivo DE-PARA
         df_depara['Chave Antiga'] = df_depara['Conta Antiga'].apply(gerar_chave_padronizada)
         df_depara['Chave Nova'] = df_depara['Conta Nova'].apply(gerar_chave_padronizada)
         st.info("Arquivo DE-PARA carregado e processado com sucesso.")
@@ -238,7 +238,7 @@ if st.sidebar.button("Conciliar Agora"):
 
                 extratos_encontrados = [df for df in extratos_encontrados if df is not None and not df.empty]
 
-                if not extratos_encontrados:
+                if not extratos_enconrados:
                     st.error("Nenhum arquivo de extrato válido foi encontrado no repositório para o mês selecionado.")
                     st.session_state['df_resultado'] = None
                 else:
