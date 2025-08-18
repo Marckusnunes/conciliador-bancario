@@ -18,7 +18,6 @@ def gerar_chave_padronizada(texto_conta):
     """
     if isinstance(texto_conta, str):
         parte_numerica = re.sub(r'\D', '', texto_conta)
-        # Alterado de -14 para -8
         ultimos_8_digitos = parte_numerica[-8:]
         return ultimos_8_digitos.lstrip('0')
     return None
@@ -220,6 +219,7 @@ if st.sidebar.button("Conciliar Agora"):
                 mes_ano = f"{partes_mes[0]}_{partes_mes[1]}"
                 
                 df_depara = carregar_depara()
+                st.session_state['audit_depara'] = df_depara # Adicionado para auditoria
                 
                 extratos_encontrados = []
                 try:
@@ -238,7 +238,7 @@ if st.sidebar.button("Conciliar Agora"):
 
                 extratos_encontrados = [df for df in extratos_encontrados if df is not None and not df.empty]
 
-                if not extratos_encontrados: # <--- CORREÇÃO DO ERRO DE DIGITAÇÃO AQUI
+                if not extratos_encontrados:
                     st.error("Nenhum arquivo de extrato válido foi encontrado no repositório para o mês selecionado.")
                     st.session_state['df_resultado'] = None
                 else:
@@ -270,7 +270,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             else:
                 st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
                 formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in resultado.columns}
-                st.dataframe(df_para_mostrar.style.format(formatter=formatters))
+                st.dataframe(df_para_mostrar.style.format(formatter=formatter))
             st.header("Download do Relatório Completo")
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -281,9 +281,15 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
                 st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
         st.markdown("---")
         with st.expander("Clique aqui para auditar os dados de origem"):
+            st.subheader("Auditoria do Arquivo DE-PARA (Após Padronização)")
+            st.write("Verifique se as chaves antigas e novas são diferentes. Se forem iguais, a tradução não terá efeito.")
+            if 'audit_depara' in st.session_state and st.session_state['audit_depara'] is not None:
+                st.dataframe(st.session_state['audit_depara'])
+            
             st.subheader("Dados Extraídos do Relatório Contábil (Com DE-PARA e chave padronizada)")
             if 'audit_contabil' in st.session_state and st.session_state['audit_contabil'] is not None:
                 st.dataframe(st.session_state['audit_contabil'])
+
             st.subheader("Dados Extraídos dos Extratos Bancários (Unificados e com chave padronizada)")
             if 'audit_extrato' in st.session_state and st.session_state['audit_extrato'] is not None:
                 st.dataframe(st.session_state['audit_extrato'])
