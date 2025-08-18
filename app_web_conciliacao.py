@@ -13,14 +13,14 @@ def gerar_chave_padronizada(texto_conta):
     """
     Padroniza a criação da chave primária:
     1. Extrai apenas os dígitos.
-    2. Pega os últimos 8 dígitos.
+    2. Pega os últimos 5 dígitos.
     3. Remove os zeros à esquerda e espaços em branco.
     """
     if isinstance(texto_conta, str):
         parte_numerica = re.sub(r'\D', '', texto_conta)
-        ultimos_8_digitos = parte_numerica[-8:]
-        # Adicionado .strip() para remover espaços em branco
-        return ultimos_8_digitos.lstrip('0').strip()
+        # Alterado de -8 para -5
+        ultimos_5_digitos = parte_numerica[-5:]
+        return ultimos_5_digitos.lstrip('0').strip()
     return None
 
 def carregar_depara():
