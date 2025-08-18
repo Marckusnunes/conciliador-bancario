@@ -196,7 +196,7 @@ class PDF(FPDF):
 def create_pdf(df):
     pdf = PDF('L', 'mm', 'A4'); pdf.add_page(); pdf.create_table(df); return bytes(pdf.output())
 
-# --- Bloco 3: Interface Web com Streamlit (Sem alterações) ---
+# --- Bloco 3: Interface Web com Streamlit ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide", page_icon="🏦")
 st.title("🏦 Prefeitura da Cidade do Rio de Janeiro"); st.header("Controladoria Geral do Município"); st.markdown("---"); st.subheader("Conciliação de Saldos Bancários e Contábeis")
 
@@ -238,7 +238,7 @@ if st.sidebar.button("Conciliar Agora"):
 
                 extratos_encontrados = [df for df in extratos_encontrados if df is not None and not df.empty]
 
-                if not extratos_enconrados:
+                if not extratos_encontrados: # <--- CORREÇÃO DO ERRO DE DIGITAÇÃO AQUI
                     st.error("Nenhum arquivo de extrato válido foi encontrado no repositório para o mês selecionado.")
                     st.session_state['df_resultado'] = None
                 else:
