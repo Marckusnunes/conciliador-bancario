@@ -3,6 +3,7 @@ import pandas as pd
 import re
 import io
 import numpy as np
+import csv
 from fpdf import FPDF
 from datetime import datetime
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
@@ -11,7 +12,7 @@ from openpyxl.utils import get_column_letter
 # --- Bloco 1: Lógica Principal da Conciliação ---
 
 def processar_relatorio_contabil(arquivo_carregado):
-    """Lê o relatório contabilístico bruto (CSV) e aplica a lógica de chave primária do utilizador."""
+    """Lê o relatório contábil bruto (CSV) e aplica a lógica de chave primária do utilizador."""
     st.info("A processar Relatório Contabilístico...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
     
@@ -45,10 +46,8 @@ def processar_relatorio_contabil(arquivo_carregado):
 
 def processar_extrato_bb_bruto(caminho_arquivo):
     """Lê e transforma o arquivo .bbt bruto do Banco do Brasil."""
-    # O arquivo .bbt parece ser um CSV separado por ';'
     df = pd.read_csv(caminho_arquivo, sep=';', header=None, encoding='latin-1')
     
-    # Seleciona as colunas de interesse
     df = df.iloc[:, [1, 2, 3, 5]].copy()
     df.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']
 
