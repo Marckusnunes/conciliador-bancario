@@ -28,6 +28,7 @@ def carregar_depara():
     try:
         df_depara = pd.read_excel("depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx", sheet_name="2025_JUNHO (2)")
         df_depara.columns = ['Conta Antiga', 'Conta Nova']
+        # Aplica a padronização em ambas as colunas para criar chaves consistentes
         df_depara['Chave Antiga'] = df_depara['Conta Antiga'].apply(gerar_chave_padronizada)
         df_depara['Chave Nova'] = df_depara['Conta Nova'].apply(gerar_chave_padronizada)
         st.info("Arquivo DE-PARA carregado e processado com sucesso.")
@@ -41,26 +42,29 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
     st.info("A processar Relatório Contabilístico...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
     
+    # Passo 1: Padronizar a chave do relatório contábil
     df['Chave Primaria'] = df['Domicílio bancário'].apply(gerar_chave_padronizada)
     df.dropna(subset=['Chave Primaria'], inplace=True)
     df = df[df['Chave Primaria'] != '']
 
+    # Passo 2: Comparar e Substituir
     if not df_depara.empty:
         st.info("A aplicar tradução de contas DE-PARA no relatório contábil...")
         
-        # Força ambas as colunas de chave a serem do tipo TEXTO (string) para garantir o merge
+        # Garante que ambas as colunas de chave são do tipo TEXTO para a comparação funcionar
         df['Chave Primaria'] = df['Chave Primaria'].astype(str)
         df_depara['Chave Antiga'] = df_depara['Chave Antiga'].astype(str)
         
+        # Usa 'merge' para encontrar as correspondências
         df = pd.merge(df, df_depara, left_on='Chave Primaria', right_on='Chave Antiga', how='left')
         
-        # Se encontrou uma Chave Nova, usa-a. Se não, mantém a Chave Primaria original.
+        # Substitui a Chave Primaria pela Chave Nova onde a correspondência foi encontrada
         df['Chave Primaria'] = df['Chave Nova'].fillna(df['Chave Primaria'])
         
-        # Limpa as colunas auxiliares do merge
+        # Limpa as colunas auxiliares
         df.drop(columns=['Chave Antiga', 'Chave Nova'], inplace=True)
     
-    # O resto da função continua igual
+    # O resto da função continua para pivotar os dados
     df['Saldo Final'] = pd.to_numeric(
         df['Saldo Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
         errors='coerce'
@@ -154,7 +158,7 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
     ], names=['Grupo', 'Item'])
     return df_final
 
-# --- Bloco 2: Funções para Geração de Arquivos (Sem alterações) ---
+# --- Bloco 2: Funções para Geração de Arquivos ---
 @st.cache_data
 def to_excel(df):
     output = io.BytesIO()
