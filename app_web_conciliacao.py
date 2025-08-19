@@ -13,18 +13,18 @@ def gerar_chave_padronizada(texto_conta):
     """
     Padroniza a criação da chave para DE-PARA e Extratos.
     1. Extrai apenas os dígitos.
-    2. Pega os últimos 5 dígitos.
-    3. Garante que a chave tenha SEMPRE 5 dígitos.
+    2. Pega os últimos 7 dígitos.
+    3. Garante que a chave tenha SEMPRE 7 dígitos.
     """
     if isinstance(texto_conta, str):
         parte_numerica = re.sub(r'\D', '', texto_conta)
-        ultimos_5_digitos = parte_numerica[-5:]
-        return ultimos_5_digitos.zfill(5)
+        ultimos_7_digitos = parte_numerica[-7:]
+        return ultimos_7_digitos.zfill(7)
     return None
 
 def gerar_chave_contabil(texto_conta):
     """
-    Extrai a chave do campo 'Domicílio bancário' e a padroniza para 5 dígitos.
+    Extrai a chave do campo 'Domicílio bancário' e a padroniza para 7 dígitos.
     """
     if not isinstance(texto_conta, str):
         return None
@@ -33,8 +33,8 @@ def gerar_chave_contabil(texto_conta):
         if len(partes) > 2:
             parte_conta = partes[2]
             conta_numerica = re.sub(r'\D', '', parte_conta)
-            ultimos_5_digitos = conta_numerica[-5:]
-            return ultimos_5_digitos.zfill(5)
+            ultimos_7_digitos = conta_numerica[-7:]
+            return ultimos_7_digitos.zfill(7)
     except (IndexError, AttributeError):
         return None
     return None
@@ -331,3 +331,4 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
