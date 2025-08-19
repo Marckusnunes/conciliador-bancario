@@ -33,7 +33,6 @@ def gerar_chave_contabil(texto_conta):
         if len(partes) > 2:
             parte_conta = partes[2]
             conta_numerica = re.sub(r'\D', '', parte_conta)
-            # ### ALTERAÇÃO FINAL ###: Pega os últimos 5 dígitos para garantir a padronização
             ultimos_5_digitos = conta_numerica[-5:]
             return ultimos_5_digitos.zfill(5)
     except (IndexError, AttributeError):
@@ -51,7 +50,7 @@ def carregar_depara():
         df_depara.columns = ['Conta Antiga', 'Conta Nova']
         df_depara['Chave Antiga'] = df_depara['Conta Antiga'].apply(gerar_chave_padronizada)
         df_depara['Chave Nova'] = df_depara['Conta Nova'].apply(gerar_chave_padronizada)
-        st.info("Arquivo DE-PARA carregado e processado com sucesso.")
+        # st.info("Arquivo DE-PARA carregado e processado com sucesso.") # REMOVIDO
         return df_depara
     except FileNotFoundError:
         st.warning("Aviso: Arquivo DE-PARA 'depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx' não encontrado. A tradução de contas não será aplicada.")
@@ -59,7 +58,7 @@ def carregar_depara():
 
 def processar_relatorio_contabil(arquivo_carregado, df_depara):
     """Lê o relatório contábil e aplica a tradução DE-PARA."""
-    st.info("A processar Relatório Contabilístico...")
+    # st.info("A processar Relatório Contabilístico...") # REMOVIDO
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
 
     df['Chave Primaria'] = df['Domicílio bancário'].apply(gerar_chave_contabil)
@@ -68,7 +67,7 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
     df = df[df['Chave Primaria'] != '']
 
     if not df_depara.empty:
-        st.info("A aplicar tradução de contas DE-PARA no relatório contábil...")
+        # st.info("A aplicar tradução de contas DE-PARA no relatório contábil...") # REMOVIDO
         df_depara_map = df_depara.copy()
         df_depara_map['Chave Antiga'] = df_depara_map['Chave Antiga'].astype(str)
         df['Chave Primaria'] = df['Chave Primaria'].astype(str)
@@ -99,7 +98,7 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
 
 def processar_extrato_bb_bruto(caminho_arquivo):
     """Lê e transforma o arquivo .bbt bruto do Banco do Brasil."""
-    st.info("A processar extrato do Banco do Brasil (.bbt)...")
+    # st.info("A processar extrato do Banco do Brasil (.bbt)...") # REMOVIDO
     df = pd.read_csv(caminho_arquivo, sep=';', header=None, encoding='latin-1', dtype=str)
     df = df.iloc[:, [1, 2, 3, 5]].copy()
     df.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']
@@ -118,7 +117,7 @@ def processar_extrato_bb_bruto(caminho_arquivo):
 
 def processar_extrato_cef_bruto(caminho_arquivo):
     """Lê o arquivo .cef da Caixa."""
-    st.info("A processar extrato da Caixa Econômica (.cef)...")
+    # st.info("A processar extrato da Caixa Econômica (.cef)...") # REMOVIDO
     with open(caminho_arquivo, 'r', encoding='latin-1') as f:
         cef_content = f.readlines()
     header_line_index = -1
@@ -144,7 +143,7 @@ def processar_extrato_cef_bruto(caminho_arquivo):
     return df
 
 def realizar_conciliacao(df_contabil, df_extrato_unificado):
-    st.info("A realizar a conciliação final...")
+    # st.info("A realizar a conciliação final...") # REMOVIDO
     df_contabil_pivot = df_contabil[['Chave Primaria', 'Domicílio bancário', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
     df_extrato_pivot = df_extrato_unificado.groupby('Chave Primaria').agg({
         'Saldo_Corrente_Extrato': 'sum',
