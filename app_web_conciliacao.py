@@ -14,7 +14,7 @@ def gerar_chave_padronizada(texto_conta):
     Padroniza a criação da chave para DE-PARA e Extratos.
     1. Extrai apenas os dígitos.
     2. Pega os últimos 5 dígitos.
-    3. Garante que a chave tenha SEMPRE 5 dígitos, preenchendo com zeros à esquerda.
+    3. Garante que a chave tenha SEMPRE 5 dígitos.
     """
     if isinstance(texto_conta, str):
         parte_numerica = re.sub(r'\D', '', texto_conta)
@@ -22,32 +22,27 @@ def gerar_chave_padronizada(texto_conta):
         return ultimos_5_digitos.zfill(5)
     return None
 
-# ### NOVO ###: Função específica para a chave do relatório contábil
 def gerar_chave_contabil(texto_conta):
     """
-    Extrai a chave do campo 'Domicílio bancário' com base na sua estrutura específica.
-    Exemplo: '001 - 2234 - 0000000097039 - ...' -> '97039'
+    Extrai a chave do campo 'Domicílio bancário' e a padroniza para 5 dígitos.
     """
     if not isinstance(texto_conta, str):
         return None
     try:
-        # Divide a string pelo hífen, o número da conta está na 3ª parte
         partes = texto_conta.split('-')
         if len(partes) > 2:
-            # Pega a parte da conta (ex: ' 0000000097039 ')
             parte_conta = partes[2]
-            # Remove qualquer coisa que não seja dígito
             conta_numerica = re.sub(r'\D', '', parte_conta)
-            # Remove zeros à esquerda e retorna
-            return conta_numerica.lstrip('0')
+            # ### ALTERAÇÃO FINAL ###: Pega os últimos 5 dígitos para garantir a padronização
+            ultimos_5_digitos = conta_numerica[-5:]
+            return ultimos_5_digitos.zfill(5)
     except (IndexError, AttributeError):
         return None
-    return None # Retorna None se o padrão não for encontrado
+    return None
 
 def carregar_depara():
     """Carrega o arquivo DE-PARA e padroniza as chaves."""
     try:
-        # ### ALTERAÇÃO ###: Adicionado dtype=str para forçar a leitura como texto
         df_depara = pd.read_excel(
             "depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx",
             sheet_name="2025_JUNHO (2)",
@@ -67,7 +62,6 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
     st.info("A processar Relatório Contabilístico...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
 
-    # ### ALTERAÇÃO ###: Usa a nova função 'gerar_chave_contabil'
     df['Chave Primaria'] = df['Domicílio bancário'].apply(gerar_chave_contabil)
     
     df.dropna(subset=['Chave Primaria'], inplace=True)
@@ -75,7 +69,6 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
 
     if not df_depara.empty:
         st.info("A aplicar tradução de contas DE-PARA no relatório contábil...")
-        # ### ALTERAÇÃO ###: Garante que as chaves de ambos os DFs são string para o merge
         df_depara_map = df_depara.copy()
         df_depara_map['Chave Antiga'] = df_depara_map['Chave Antiga'].astype(str)
         df['Chave Primaria'] = df['Chave Primaria'].astype(str)
@@ -103,9 +96,6 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
         df_final['Saldo_Aplicado_Contabil'] = 0
 
     return df, df_final
-
-
-# O restante do código permanece o mesmo...
 
 def processar_extrato_bb_bruto(caminho_arquivo):
     """Lê e transforma o arquivo .bbt bruto do Banco do Brasil."""
@@ -138,7 +128,7 @@ def processar_extrato_cef_bruto(caminho_arquivo):
             break
     if header_line_index == -1: return pd.DataFrame()
     data_io = io.StringIO("".join(cef_content[header_line_index:]))
-    df = pd.read_csv(data_io, sep=';', dtype=str) # Adicionado dtype=str para consistência
+    df = pd.read_csv(data_io, sep=';', dtype=str)
     df['Chave Primaria'] = df['Conta Vinculada'].apply(gerar_chave_padronizada)
     df.rename(columns={
         'Saldo Conta Corrente (R$)': 'Saldo_Corrente_Extrato',
@@ -160,8 +150,7 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
         'Saldo_Corrente_Extrato': 'sum',
         'Saldo_Aplicado_Extrato': 'sum'
     }).reset_index()
-
-    # Garante que as chaves para o merge final são do mesmo tipo (string)
+    
     df_contabil_pivot['Chave Primaria'] = df_contabil_pivot['Chave Primaria'].astype(str)
     df_extrato_pivot['Chave Primaria'] = df_extrato_pivot['Chave Primaria'].astype(str)
 
@@ -322,14 +311,15 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Arquivo DE-PARA")
             if 'audit_depara' in st.session_state and st.session_state['audit_depara'] is not None:
                 df_audit_view = st.session_state['audit_depara'].copy()
-                df_audit_view = df_audit_view[['Conta Antiga', 'Chave Antiga', 'Conta Nova', 'Chave Nova']]
-                df_audit_view.columns = [
-                    'Conta Original (Antiga)', 
-                    'Chave Gerada (Antiga)', 
-                    'Conta Original (Nova)', 
-                    'Chave Gerada (Nova)'
-                ]
-                st.dataframe(df_audit_view)
+                if not df_audit_view.empty:
+                    df_audit_view = df_audit_view[['Conta Antiga', 'Chave Antiga', 'Conta Nova', 'Chave Nova']]
+                    df_audit_view.columns = [
+                        'Conta Original (Antiga)', 
+                        'Chave Gerada (Antiga)', 
+                        'Conta Original (Nova)', 
+                        'Chave Gerada (Nova)'
+                    ]
+                    st.dataframe(df_audit_view)
             
             st.subheader("Auditoria do Relatório Contábil (com Chave Primária)")
             if 'audit_contabil' in st.session_state and st.session_state['audit_contabil'] is not None:
