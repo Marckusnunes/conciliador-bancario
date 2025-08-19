@@ -237,14 +237,11 @@ if st.sidebar.button("Conciliar Agora"):
                 st.session_state['audit_cef'] = None
                 
                 try:
-                    # ALTERADO: Caminho do arquivo para .csv
                     caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.csv"
-                    # ALTERADO: Chamada da nova função para processar o .csv
                     df_bb = processar_extrato_bb_bruto_csv(caminho_bb)
                     extratos_encontrados.append(df_bb)
                     st.session_state['audit_bb'] = df_bb
                 except FileNotFoundError:
-                    # ALTERADO: Mensagem de aviso para .csv
                     st.warning(f"Aviso: Extrato do BB (.csv) para {st.session_state.mes_selecionado} não encontrado.")
                 
                 try:
