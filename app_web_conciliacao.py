@@ -18,10 +18,7 @@ def gerar_chave_padronizada(texto_conta):
     """
     if isinstance(texto_conta, str):
         parte_numerica = re.sub(r'\D', '', texto_conta)
-        # Pega os últimos 5 dígitos
         ultimos_5_digitos = parte_numerica[-5:]
-        # ### ALTERAÇÃO ###: Usa zfill(5) para garantir que sempre tenha 5 dígitos
-        # Ex: '123' vira '00123'
         return ultimos_5_digitos.zfill(5)
     return None
 
@@ -30,11 +27,9 @@ def carregar_depara():
     try:
         df_depara = pd.read_excel("depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx", sheet_name="2025_JUNHO (2)")
         df_depara.columns = ['Conta Antiga', 'Conta Nova']
-        # Aplica a padronização em ambas as colunas para criar chaves consistentes
         df_depara['Chave Antiga'] = df_depara['Conta Antiga'].apply(gerar_chave_padronizada)
         df_depara['Chave Nova'] = df_depara['Conta Nova'].apply(gerar_chave_padronizada)
         st.info("Arquivo DE-PARA carregado e processado com sucesso.")
-        # Retorna o DataFrame completo para a auditoria
         return df_depara
     except FileNotFoundError:
         st.warning("Aviso: Arquivo DE-PARA 'depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx' não encontrado. A tradução de contas não será aplicada.")
@@ -45,22 +40,15 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
     st.info("A processar Relatório Contabilístico...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
     
-    # Passo 1: Padronizar a chave do relatório contábil
     df['Chave Primaria'] = df['Domicílio bancário'].apply(gerar_chave_padronizada)
     df.dropna(subset=['Chave Primaria'], inplace=True)
     df = df[df['Chave Primaria'] != '']
 
-    # Passo 2: Comparar e Substituir
     if not df_depara.empty:
         st.info("A aplicar tradução de contas DE-PARA no relatório contábil...")
-        
-        # Cria um dicionário de mapeamento para a substituição
         mapa_depara = df_depara.set_index('Chave Antiga')['Chave Nova'].to_dict()
-        
-        # Aplica a substituição usando o mapa
         df['Chave Primaria'] = df['Chave Primaria'].replace(mapa_depara)
     
-    # O resto da função continua para pivotar os dados
     df['Saldo Final'] = pd.to_numeric(
         df['Saldo Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
         errors='coerce'
@@ -80,7 +68,6 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
     if 'Saldo_Aplicado_Contabil' not in df_final.columns:
         df_final['Saldo_Aplicado_Contabil'] = 0
         
-    # ### ALTERAÇÃO ###: Retorna o DataFrame ANTES de pivotar para a auditoria
     return df, df_final
 
 def processar_extrato_bb_bruto(caminho_arquivo):
@@ -89,9 +76,7 @@ def processar_extrato_bb_bruto(caminho_arquivo):
     df = pd.read_csv(caminho_arquivo, sep=';', header=None, encoding='latin-1', dtype=str)
     df = df.iloc[:, [1, 2, 3, 5]].copy()
     df.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']
-    
     df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
-    
     def formatar_saldo_bbt(valor):
         valor_str = str(valor)
         valor_limpo = re.sub(r'\D', '', valor_str)
@@ -117,9 +102,7 @@ def processar_extrato_cef_bruto(caminho_arquivo):
     if header_line_index == -1: return pd.DataFrame()
     data_io = io.StringIO("".join(cef_content[header_line_index:]))
     df = pd.read_csv(data_io, sep=';')
-
     df['Chave Primaria'] = df['Conta Vinculada'].apply(gerar_chave_padronizada)
-
     df.rename(columns={
         'Saldo Conta Corrente (R$)': 'Saldo_Corrente_Extrato',
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
@@ -234,7 +217,6 @@ if st.sidebar.button("Conciliar Agora"):
                 st.session_state['audit_depara'] = df_depara
                 
                 extratos_encontrados = []
-                # ### ALTERAÇÃO ###: Inicializa os dataframes de auditoria dos extratos
                 st.session_state['audit_bb'] = None
                 st.session_state['audit_cef'] = None
                 
@@ -242,7 +224,7 @@ if st.sidebar.button("Conciliar Agora"):
                     caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.bbt"
                     df_bb = processar_extrato_bb_bruto(caminho_bb)
                     extratos_encontrados.append(df_bb)
-                    st.session_state['audit_bb'] = df_bb # ### ALTERAÇÃO ###
+                    st.session_state['audit_bb'] = df_bb
                 except FileNotFoundError:
                     st.warning(f"Aviso: Extrato do BB (.bbt) para {st.session_state.mes_selecionado} não encontrado.")
                 
@@ -250,7 +232,7 @@ if st.sidebar.button("Conciliar Agora"):
                     caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
                     df_cef = processar_extrato_cef_bruto(caminho_cef)
                     extratos_encontrados.append(df_cef)
-                    st.session_state['audit_cef'] = df_cef # ### ALTERAÇÃO ###
+                    st.session_state['audit_cef'] = df_cef
                 except FileNotFoundError:
                     st.warning(f"Aviso: Extrato da CEF (.cef) para {st.session_state.mes_selecionado} não encontrado.")
 
@@ -261,12 +243,8 @@ if st.sidebar.button("Conciliar Agora"):
                     st.session_state['df_resultado'] = None
                 else:
                     df_extrato_unificado = pd.concat(extratos_encontrados, ignore_index=True)
-                    # ### ALTERAÇÃO ###: Captura os dois dataframes retornados
                     df_contabil_raw_audit, df_contabil_processado = processar_relatorio_contabil(contabilidade_bruto, df_depara)
-                    
-                    # ### ALTERAÇÃO ###: Salva o dataframe "raw" para auditoria
                     st.session_state['audit_contabil'] = df_contabil_raw_audit
-                    
                     df_resultado_final = realizar_conciliacao(df_contabil_processado, df_extrato_unificado)
                     st.success("Conciliação Concluída com Sucesso!")
                     st.session_state['df_resultado'] = df_resultado_final
@@ -299,12 +277,20 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             with col3:
                 st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
         st.markdown("---")
-        # ### ALTERAÇÃO ###: Seção de auditoria completamente reformulada
         with st.expander("Clique aqui para auditar os dados de origem"):
             
             st.subheader("Auditoria do Arquivo DE-PARA")
             if 'audit_depara' in st.session_state and st.session_state['audit_depara'] is not None:
-                st.dataframe(st.session_state['audit_depara'])
+                # ### ALTERAÇÃO ESTÁ AQUI ###
+                df_audit_view = st.session_state['audit_depara'].copy()
+                df_audit_view = df_audit_view[['Conta Antiga', 'Chave Antiga', 'Conta Nova', 'Chave Nova']]
+                df_audit_view.columns = [
+                    'Conta Original (Antiga)', 
+                    'Chave Gerada (Antiga)', 
+                    'Conta Original (Nova)', 
+                    'Chave Gerada (Nova)'
+                ]
+                st.dataframe(df_audit_view)
             
             st.subheader("Auditoria do Relatório Contábil (com Chave Primária)")
             if 'audit_contabil' in st.session_state and st.session_state['audit_contabil'] is not None:
