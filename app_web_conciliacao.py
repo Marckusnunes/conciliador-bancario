@@ -50,7 +50,6 @@ def carregar_depara():
         df_depara.columns = ['Conta Antiga', 'Conta Nova']
         df_depara['Chave Antiga'] = df_depara['Conta Antiga'].apply(gerar_chave_padronizada)
         df_depara['Chave Nova'] = df_depara['Conta Nova'].apply(gerar_chave_padronizada)
-        # st.info("Arquivo DE-PARA carregado e processado com sucesso.") # REMOVIDO
         return df_depara
     except FileNotFoundError:
         st.warning("Aviso: Arquivo DE-PARA 'depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx' não encontrado. A tradução de contas não será aplicada.")
@@ -58,7 +57,6 @@ def carregar_depara():
 
 def processar_relatorio_contabil(arquivo_carregado, df_depara):
     """Lê o relatório contábil e aplica a tradução DE-PARA."""
-    # st.info("A processar Relatório Contabilístico...") # REMOVIDO
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
 
     df['Chave Primaria'] = df['Domicílio bancário'].apply(gerar_chave_contabil)
@@ -67,7 +65,6 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
     df = df[df['Chave Primaria'] != '']
 
     if not df_depara.empty:
-        # st.info("A aplicar tradução de contas DE-PARA no relatório contábil...") # REMOVIDO
         df_depara_map = df_depara.copy()
         df_depara_map['Chave Antiga'] = df_depara_map['Chave Antiga'].astype(str)
         df['Chave Primaria'] = df['Chave Primaria'].astype(str)
@@ -96,28 +93,27 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
 
     return df, df_final
 
-def processar_extrato_bb_bruto(caminho_arquivo):
-    """Lê e transforma o arquivo .bbt bruto do Banco do Brasil."""
-    # st.info("A processar extrato do Banco do Brasil (.bbt)...") # REMOVIDO
-    df = pd.read_csv(caminho_arquivo, sep=';', header=None, encoding='latin-1', dtype=str)
-    df = df.iloc[:, [1, 2, 3, 5]].copy()
-    df.columns = ['Conta', 'Titular', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']
+def processar_extrato_bb_csv(caminho_arquivo):
+    """Lê e transforma o arquivo .csv do Banco do Brasil."""
+    df = pd.read_csv(caminho_arquivo, sep=',', encoding='latin-1', dtype=str)
+    
+    # Renomeia as colunas para o padrão do restante do código
+    df.rename(columns={
+        'Saldo em conta': 'Saldo_Corrente_Extrato',
+        'Saldo investido': 'Saldo_Aplicado_Extrato'
+    }, inplace=True)
+    
+    # Gera a chave primária a partir da coluna 'Conta'
     df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
-    def formatar_saldo_bbt(valor):
-        valor_str = str(valor)
-        valor_limpo = re.sub(r'\D', '', valor_str)
-        if len(valor_limpo) > 2:
-            return float(f"{valor_limpo[:-2]}.{valor_limpo[-2:]}")
-        elif valor_limpo:
-            return float(f"0.{valor_limpo}")
-        return 0.0
+    
+    # Converte as colunas de saldo para numérico (assumindo que estão sem casas decimais)
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
-        df[col] = df[col].apply(formatar_saldo_bbt)
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0) / 100
+
     return df
 
 def processar_extrato_cef_bruto(caminho_arquivo):
     """Lê o arquivo .cef da Caixa."""
-    # st.info("A processar extrato da Caixa Econômica (.cef)...") # REMOVIDO
     with open(caminho_arquivo, 'r', encoding='latin-1') as f:
         cef_content = f.readlines()
     header_line_index = -1
@@ -143,7 +139,6 @@ def processar_extrato_cef_bruto(caminho_arquivo):
     return df
 
 def realizar_conciliacao(df_contabil, df_extrato_unificado):
-    # st.info("A realizar a conciliação final...") # REMOVIDO
     df_contabil_pivot = df_contabil[['Chave Primaria', 'Domicílio bancário', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
     df_extrato_pivot = df_extrato_unificado.groupby('Chave Primaria').agg({
         'Saldo_Corrente_Extrato': 'sum',
@@ -249,12 +244,15 @@ if st.sidebar.button("Conciliar Agora"):
                 st.session_state['audit_cef'] = None
                 
                 try:
-                    caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.bbt"
-                    df_bb = processar_extrato_bb_bruto(caminho_bb)
+                    # ALTERADO: Caminho do arquivo para .csv
+                    caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.csv"
+                    # ALTERADO: Chamada da nova função para processar o .csv
+                    df_bb = processar_extrato_bb_csv(caminho_bb)
                     extratos_encontrados.append(df_bb)
                     st.session_state['audit_bb'] = df_bb
                 except FileNotFoundError:
-                    st.warning(f"Aviso: Extrato do BB (.bbt) para {st.session_state.mes_selecionado} não encontrado.")
+                    # ALTERADO: Mensagem de aviso para .csv
+                    st.warning(f"Aviso: Extrato do BB (.csv) para {st.session_state.mes_selecionado} não encontrado.")
                 
                 try:
                     caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
@@ -331,4 +329,3 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
-
