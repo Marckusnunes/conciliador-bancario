@@ -11,7 +11,7 @@ from openpyxl.utils import get_column_letter
 
 def gerar_chave_padronizada(texto_conta):
     """
-    Padroniza a criação da chave primária:
+    Padroniza a criação da chave para DE-PARA e Extratos.
     1. Extrai apenas os dígitos.
     2. Pega os últimos 5 dígitos.
     3. Garante que a chave tenha SEMPRE 5 dígitos, preenchendo com zeros à esquerda.
@@ -22,10 +22,37 @@ def gerar_chave_padronizada(texto_conta):
         return ultimos_5_digitos.zfill(5)
     return None
 
+# ### NOVO ###: Função específica para a chave do relatório contábil
+def gerar_chave_contabil(texto_conta):
+    """
+    Extrai a chave do campo 'Domicílio bancário' com base na sua estrutura específica.
+    Exemplo: '001 - 2234 - 0000000097039 - ...' -> '97039'
+    """
+    if not isinstance(texto_conta, str):
+        return None
+    try:
+        # Divide a string pelo hífen, o número da conta está na 3ª parte
+        partes = texto_conta.split('-')
+        if len(partes) > 2:
+            # Pega a parte da conta (ex: ' 0000000097039 ')
+            parte_conta = partes[2]
+            # Remove qualquer coisa que não seja dígito
+            conta_numerica = re.sub(r'\D', '', parte_conta)
+            # Remove zeros à esquerda e retorna
+            return conta_numerica.lstrip('0')
+    except (IndexError, AttributeError):
+        return None
+    return None # Retorna None se o padrão não for encontrado
+
 def carregar_depara():
     """Carrega o arquivo DE-PARA e padroniza as chaves."""
     try:
-        df_depara = pd.read_excel("depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx", sheet_name="2025_JUNHO (2)")
+        # ### ALTERAÇÃO ###: Adicionado dtype=str para forçar a leitura como texto
+        df_depara = pd.read_excel(
+            "depara/DEPARA_CONTAS BANCÁRIAS_CEF.xlsx",
+            sheet_name="2025_JUNHO (2)",
+            dtype=str
+        )
         df_depara.columns = ['Conta Antiga', 'Conta Nova']
         df_depara['Chave Antiga'] = df_depara['Conta Antiga'].apply(gerar_chave_padronizada)
         df_depara['Chave Nova'] = df_depara['Conta Nova'].apply(gerar_chave_padronizada)
@@ -39,36 +66,46 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
     """Lê o relatório contábil e aplica a tradução DE-PARA."""
     st.info("A processar Relatório Contabilístico...")
     df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
+
+    # ### ALTERAÇÃO ###: Usa a nova função 'gerar_chave_contabil'
+    df['Chave Primaria'] = df['Domicílio bancário'].apply(gerar_chave_contabil)
     
-    df['Chave Primaria'] = df['Domicílio bancário'].apply(gerar_chave_padronizada)
     df.dropna(subset=['Chave Primaria'], inplace=True)
     df = df[df['Chave Primaria'] != '']
 
     if not df_depara.empty:
         st.info("A aplicar tradução de contas DE-PARA no relatório contábil...")
-        mapa_depara = df_depara.set_index('Chave Antiga')['Chave Nova'].to_dict()
+        # ### ALTERAÇÃO ###: Garante que as chaves de ambos os DFs são string para o merge
+        df_depara_map = df_depara.copy()
+        df_depara_map['Chave Antiga'] = df_depara_map['Chave Antiga'].astype(str)
+        df['Chave Primaria'] = df['Chave Primaria'].astype(str)
+        
+        mapa_depara = df_depara_map.set_index('Chave Antiga')['Chave Nova'].to_dict()
         df['Chave Primaria'] = df['Chave Primaria'].replace(mapa_depara)
-    
+
     df['Saldo Final'] = pd.to_numeric(
         df['Saldo Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
         errors='coerce'
     ).fillna(0)
-    
+
     df_pivot = df.pivot_table(index='Chave Primaria', columns='Conta contábil', values='Saldo Final', aggfunc='sum').reset_index()
-    
+
     rename_dict = {c: 'Saldo_Corrente_Contabil' for c in df_pivot.columns if '111111901' in str(c)}
     rename_dict.update({c: 'Saldo_Aplicado_Contabil' for c in df_pivot.columns if '111115001' in str(c)})
     df_pivot.rename(columns=rename_dict, inplace=True)
 
     mapa_conta = df[['Chave Primaria', 'Domicílio bancário']].drop_duplicates().set_index('Chave Primaria')
     df_final = df_pivot.join(mapa_conta, on='Chave Primaria')
-    
+
     if 'Saldo_Corrente_Contabil' not in df_final.columns:
         df_final['Saldo_Corrente_Contabil'] = 0
     if 'Saldo_Aplicado_Contabil' not in df_final.columns:
         df_final['Saldo_Aplicado_Contabil'] = 0
-        
+
     return df, df_final
+
+
+# O restante do código permanece o mesmo...
 
 def processar_extrato_bb_bruto(caminho_arquivo):
     """Lê e transforma o arquivo .bbt bruto do Banco do Brasil."""
@@ -101,7 +138,7 @@ def processar_extrato_cef_bruto(caminho_arquivo):
             break
     if header_line_index == -1: return pd.DataFrame()
     data_io = io.StringIO("".join(cef_content[header_line_index:]))
-    df = pd.read_csv(data_io, sep=';')
+    df = pd.read_csv(data_io, sep=';', dtype=str) # Adicionado dtype=str para consistência
     df['Chave Primaria'] = df['Conta Vinculada'].apply(gerar_chave_padronizada)
     df.rename(columns={
         'Saldo Conta Corrente (R$)': 'Saldo_Corrente_Extrato',
@@ -123,8 +160,11 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
         'Saldo_Corrente_Extrato': 'sum',
         'Saldo_Aplicado_Extrato': 'sum'
     }).reset_index()
+
+    # Garante que as chaves para o merge final são do mesmo tipo (string)
     df_contabil_pivot['Chave Primaria'] = df_contabil_pivot['Chave Primaria'].astype(str)
     df_extrato_pivot['Chave Primaria'] = df_extrato_pivot['Chave Primaria'].astype(str)
+
     df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Chave Primaria', how='inner')
     if df_final.empty: return pd.DataFrame()
     df_final.rename(columns={'Domicílio bancário': 'Conta Bancária'}, inplace=True)
@@ -281,7 +321,6 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             
             st.subheader("Auditoria do Arquivo DE-PARA")
             if 'audit_depara' in st.session_state and st.session_state['audit_depara'] is not None:
-                # ### ALTERAÇÃO ESTÁ AQUI ###
                 df_audit_view = st.session_state['audit_depara'].copy()
                 df_audit_view = df_audit_view[['Conta Antiga', 'Chave Antiga', 'Conta Nova', 'Chave Nova']]
                 df_audit_view.columns = [
