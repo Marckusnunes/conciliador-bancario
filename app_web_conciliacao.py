@@ -93,29 +93,27 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
 
     return df, df_final
 
-def processar_extrato_bb_csv(caminho_arquivo):
+def processar_extrato_bb_csv(arquivo_carregado):
     """Lê e transforma o arquivo .csv do Banco do Brasil."""
-    df = pd.read_csv(caminho_arquivo, sep=',', encoding='latin-1', dtype=str)
+    df = pd.read_csv(arquivo_carregado, sep=',', encoding='latin-1', dtype=str)
     
-    # Renomeia as colunas para o padrão do restante do código
     df.rename(columns={
         'Saldo em conta': 'Saldo_Corrente_Extrato',
         'Saldo investido': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
     
-    # Gera a chave primária a partir da coluna 'Conta'
     df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
     
-    # Converte as colunas de saldo para numérico (assumindo que estão sem casas decimais)
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0) / 100
 
     return df
 
-def processar_extrato_cef_bruto(caminho_arquivo):
+def processar_extrato_cef_bruto(arquivo_carregado):
     """Lê o arquivo .cef da Caixa."""
-    with open(caminho_arquivo, 'r', encoding='latin-1') as f:
-        cef_content = f.readlines()
+    # O arquivo carregado pelo Streamlit é um objeto BytesIO, então precisamos decodificá-lo
+    string_data = io.StringIO(arquivo_carregado.getvalue().decode('latin-1'))
+    cef_content = string_data.readlines()
     header_line_index = -1
     for i, line in enumerate(cef_content):
         if line.strip().startswith("Conta Vinculada;"):
@@ -226,16 +224,16 @@ except ValueError:
     index_padrao = 0
 st.selectbox("Selecione o Mês da Conciliação:", options=opcoes_meses_formatadas, index=index_padrao, key='mes_selecionado')
 
-st.sidebar.header("Carregar Relatório Contábil")
-contabilidade_bruto = st.sidebar.file_uploader(f"Selecione o seu Relatório Contábil Bruto de {st.session_state.mes_selecionado}", type=['csv'])
+st.sidebar.header("Carregar Arquivos")
+contabilidade_bruto = st.sidebar.file_uploader(f"1. Relatório Contábil Bruto (.csv)", type=['csv'])
+extrato_bb_bruto = st.sidebar.file_uploader(f"2. Extrato Banco do Brasil (.csv)", type=['csv'])
+extrato_cef_bruto = st.sidebar.file_uploader(f"3. Extrato Caixa Econômica (.cef)", type=['cef'])
+
 
 if st.sidebar.button("Conciliar Agora"):
     if contabilidade_bruto is not None:
         with st.spinner("Processando..."):
             try:
-                partes_mes = st.session_state.mes_selecionado.lower().split()
-                mes_ano = f"{partes_mes[0]}_{partes_mes[1]}"
-                
                 df_depara = carregar_depara()
                 st.session_state['audit_depara'] = df_depara
                 
@@ -243,29 +241,26 @@ if st.sidebar.button("Conciliar Agora"):
                 st.session_state['audit_bb'] = None
                 st.session_state['audit_cef'] = None
                 
-                try:
-                    # ALTERADO: Caminho do arquivo para .csv
-                    caminho_bb = f"extratos_consolidados/extrato_bb_{mes_ano}.csv"
-                    # ALTERADO: Chamada da nova função para processar o .csv
-                    df_bb = processar_extrato_bb_csv(caminho_bb)
+                # Processa o extrato do BB se o arquivo foi carregado
+                if extrato_bb_bruto is not None:
+                    df_bb = processar_extrato_bb_csv(extrato_bb_bruto)
                     extratos_encontrados.append(df_bb)
                     st.session_state['audit_bb'] = df_bb
-                except FileNotFoundError:
-                    # ALTERADO: Mensagem de aviso para .csv
-                    st.warning(f"Aviso: Extrato do BB (.csv) para {st.session_state.mes_selecionado} não encontrado.")
+                else:
+                    st.warning(f"Aviso: Extrato do BB (.csv) para {st.session_state.mes_selecionado} não foi carregado.")
                 
-                try:
-                    caminho_cef = f"extratos_consolidados/extrato_cef_{mes_ano}.cef"
-                    df_cef = processar_extrato_cef_bruto(caminho_cef)
+                # Processa o extrato da CEF se o arquivo foi carregado
+                if extrato_cef_bruto is not None:
+                    df_cef = processar_extrato_cef_bruto(extrato_cef_bruto)
                     extratos_encontrados.append(df_cef)
                     st.session_state['audit_cef'] = df_cef
-                except FileNotFoundError:
-                    st.warning(f"Aviso: Extrato da CEF (.cef) para {st.session_state.mes_selecionado} não encontrado.")
+                else:
+                    st.warning(f"Aviso: Extrato da CEF (.cef) para {st.session_state.mes_selecionado} não foi carregado.")
 
                 extratos_encontrados = [df for df in extratos_encontrados if df is not None and not df.empty]
 
                 if not extratos_encontrados:
-                    st.error("Nenhum arquivo de extrato válido foi encontrado no repositório para o mês selecionado.")
+                    st.error("Nenhum arquivo de extrato válido foi carregado para o mês selecionado.")
                     st.session_state['df_resultado'] = None
                 else:
                     df_extrato_unificado = pd.concat(extratos_encontrados, ignore_index=True)
