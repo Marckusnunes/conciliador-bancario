@@ -94,15 +94,38 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
     return df, df_final
 
 def processar_extrato_bb_bruto_csv(caminho_arquivo):
-    """Lê e transforma o arquivo .csv bruto do Banco do Brasil."""
+    """
+    Lê e transforma o arquivo .csv bruto do Banco do Brasil.
+    Esta versão foi corrigida para lidar com formatos numéricos brasileiros (com '.' e ','),
+    garantindo que os saldos sejam convertidos para o tipo numérico corretamente.
+    """
     df = pd.read_csv(caminho_arquivo, sep=',', encoding='latin-1', dtype=str)
     df.rename(columns={
         'Saldo em conta': 'Saldo_Corrente_Extrato',
         'Saldo investido': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
     df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
+    
+    # --- INÍCIO DA CORREÇÃO ---
+    # Padroniza a conversão de colunas de saldo para o formato numérico
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0) / 100
+        if col in df.columns:
+            # 1. Converte a coluna para texto (garantia)
+            # 2. Remove os pontos (separador de milhar)
+            # 3. Substitui a vírgula (separador decimal) por ponto
+            # 4. Converte o texto limpo para número
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
+                errors='coerce'
+            ).fillna(0)
+    # --- FIM DA CORREÇÃO ---
+            
+    # Garante que as colunas existam, caso não venham no arquivo original
+    if 'Saldo_Corrente_Extrato' not in df.columns:
+        df['Saldo_Corrente_Extrato'] = 0
+    if 'Saldo_Aplicado_Extrato' not in df.columns:
+        df['Saldo_Aplicado_Extrato'] = 0
+        
     return df
 
 def processar_extrato_cef_bruto(caminho_arquivo):
@@ -334,4 +357,5 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
