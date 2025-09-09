@@ -132,26 +132,41 @@ def processar_extrato_cef_bruto(caminho_arquivo):
     return df
 
 def realizar_conciliacao(df_contabil, df_extrato_unificado):
+    """
+    Realiza a junção dos dados contábeis e dos extratos, calculando as diferenças.
+    A função agora garante que as chaves de ambos os dataframes sejam do tipo string
+    antes de fazer o merge para evitar falhas de correspondência.
+    """
     df_contabil_pivot = df_contabil[['Chave Primaria', 'Domicílio bancário', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
     df_extrato_pivot = df_extrato_unificado.groupby('Chave Primaria').agg({
         'Saldo_Corrente_Extrato': 'sum',
         'Saldo_Aplicado_Extrato': 'sum'
     }).reset_index()
     
+    # --- INÍCIO DA CORREÇÃO ---
+    # GARANTIA DE TIPO: Assegura que a chave em ambos os DataFrames seja do tipo string.
+    # Este passo é crucial para que o merge funcione corretamente, pois evita
+    # que '0012345' (texto) seja diferente de 12345 (número).
     df_contabil_pivot['Chave Primaria'] = df_contabil_pivot['Chave Primaria'].astype(str)
     df_extrato_pivot['Chave Primaria'] = df_extrato_pivot['Chave Primaria'].astype(str)
+    # --- FIM DA CORREÇÃO ---
 
     df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Chave Primaria', how='inner')
-    if df_final.empty: return pd.DataFrame()
+    
+    if df_final.empty:
+        return pd.DataFrame()
+        
     df_final.rename(columns={'Domicílio bancário': 'Conta Bancária'}, inplace=True)
     df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
     df_final = df_final.set_index('Conta Bancária')
     df_final = df_final[['Saldo_Corrente_Contabil', 'Saldo_Corrente_Extrato', 'Diferenca_Movimento','Saldo_Aplicado_Contabil', 'Saldo_Aplicado_Extrato', 'Diferenca_Aplicacao']]
+    
     df_final.columns = pd.MultiIndex.from_tuples([
         ('Conta Movimento', 'Saldo Contábil'), ('Conta Movimento', 'Saldo Extrato'), ('Conta Movimento', 'Diferença'),
         ('Aplicação Financeira', 'Saldo Contábil'), ('Aplicação Financeira', 'Saldo Extrato'), ('Aplicação Financeira', 'Diferença')
     ], names=['Grupo', 'Item'])
+    
     return df_final
 
 # --- Bloco 2: Funções para Geração de Arquivos ---
@@ -319,3 +334,4 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
