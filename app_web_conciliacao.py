@@ -18,28 +18,10 @@ def converter_inteiro_para_decimal(valor_texto):
     return float(valor_formatado)
 
 def gerar_chave_padronizada(texto_conta):
-    """
-    Padroniza a criação da chave para DE-PARA e Extratos (versão robusta).
-    1. Converte o input para string para lidar com valores nulos (NaN) ou numéricos.
-    2. Extrai apenas os dígitos.
-    3. Pega os últimos 7 dígitos.
-    4. Garante que a chave tenha SEMPRE 7 dígitos.
-    """
-    # Garante que estamos trabalhando com uma string e remove espaços em branco
     texto_conta_str = str(texto_conta).strip()
-    
-    # Se a string resultante for vazia ou representar um nulo (como 'nan' ou 'None'), retorna None.
-    if not texto_conta_str or texto_conta_str.lower() in ['nan', 'none']:
-        return None
-    
-    # Extrai apenas os dígitos da string
+    if not texto_conta_str or texto_conta_str.lower() in ['nan', 'none']: return None
     parte_numerica = re.sub(r'\D', '', texto_conta_str)
-    
-    # Se, após remover não-dígitos, a string ficar vazia, retorna None
-    if not parte_numerica:
-        return None
-        
-    # Pega os últimos 7 dígitos e preenche com zeros à esquerda se necessário
+    if not parte_numerica: return None
     ultimos_7_digitos = parte_numerica[-7:]
     return ultimos_7_digitos.zfill(7)
 
@@ -67,7 +49,7 @@ def carregar_depara():
         return pd.DataFrame()
 
 def processar_relatorio_contabil(arquivo_carregado, df_depara):
-    df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
+    df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1, dtype=str)
     df['Chave Primaria'] = df['Domicílio bancário'].apply(gerar_chave_contabil)
     df.dropna(subset=['Chave Primaria'], inplace=True)
     df = df[df['Chave Primaria'] != '']
@@ -116,24 +98,41 @@ def processar_extrato_cef_bruto(caminho_arquivo):
 
 def realizar_conciliacao(df_contabil, df_extrato_unificado):
     df_contabil_pivot = df_contabil[['Chave Primaria', 'Domicílio bancário', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
-    df_extrato_pivot = df_extrato_unificado.groupby('Chave Primaria').agg({'Saldo_Corrente_Extrato': 'sum', 'Saldo_Aplicado_Extrato': 'sum'}).reset_index()
+    df_extrato_pivot = df_extrato_unificado.groupby('Chave Primaria').agg({
+        'Saldo_Corrente_Extrato': 'sum',
+        'Saldo_Aplicado_Extrato': 'sum'
+    }).reset_index()
+    
     df_contabil_pivot['Chave Primaria'] = df_contabil_pivot['Chave Primaria'].astype(str)
     df_extrato_pivot['Chave Primaria'] = df_extrato_pivot['Chave Primaria'].astype(str)
-    
-    # Mantendo o 'outer' para o nosso teste de depuração
+
     df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Chave Primaria', how='outer')
-    
-    if df_final.empty: return pd.DataFrame()
+
+    if df_final.empty:
+        return pd.DataFrame()
+
+    saldos_cols = ['Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil', 'Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']
+    for col in saldos_cols:
+        if col not in df_final.columns:
+            df_final[col] = 0
+        df_final[col].fillna(0, inplace=True)
+
+    df_final['Domicílio bancário'].fillna(f"[Conta Apenas no Extrato: Chave {df_final['Chave Primaria']}]", inplace=True)
     df_final.rename(columns={'Domicílio bancário': 'Conta Bancária'}, inplace=True)
+
     df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
+
     df_final = df_final.set_index('Conta Bancária')
-    df_final = df_final[['Saldo_Corrente_Contabil', 'Saldo_Corrente_Extrato', 'Diferenca_Movimento','Saldo_Aplicado_Contabil', 'Saldo_Aplicado_Extrato', 'Diferenca_Aplicacao']]
+    
+    df_final = df_final[['Saldo_Corrente_Contabil', 'Saldo_Corrente_Extrato', 'Diferenca_Movimento', 'Saldo_Aplicado_Contabil', 'Saldo_Aplicado_Extrato', 'Diferenca_Aplicacao']]
     df_final.columns = pd.MultiIndex.from_tuples([
         ('Conta Movimento', 'Saldo Contábil'), ('Conta Movimento', 'Saldo Extrato'), ('Conta Movimento', 'Diferença'),
         ('Aplicação Financeira', 'Saldo Contábil'), ('Aplicação Financeira', 'Saldo Extrato'), ('Aplicação Financeira', 'Diferença')
     ], names=['Grupo', 'Item'])
+    
     return df_final
+
 
 # --- Bloco 2: Funções para Geração de Arquivos (Sem alterações) ---
 @st.cache_data
@@ -171,17 +170,17 @@ class PDF(FPDF):
     def footer(self):
         self.set_y(-15); self.set_font('Arial', 'I', 8); self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
     def create_table(self, data):
+        data_reset = data.reset_index()
         self.set_font('Arial', '', 7); line_height = self.font_size * 2.5; col_width = 30
         self.set_font('Arial', 'B', 8); index_name = data.index.name if data.index.name else 'ID'; self.cell(40, line_height, index_name, 1, 0, 'C'); self.cell(col_width * 3, line_height, 'Conta Movimento', 1, 0, 'C'); self.cell(col_width * 3, line_height, 'Aplicação Financeira', 1, 0, 'C'); self.ln(line_height)
         self.set_font('Arial', 'B', 7); self.cell(40, line_height, '', 1, 0, 'C'); sub_headers = ['Saldo Contábil', 'Saldo Extrato', 'Diferença'];
         for _ in range(2):
             for sub_header in sub_headers: self.cell(col_width, line_height, sub_header, 1, 0, 'C')
         self.ln(line_height)
-        self.set_font('Arial', '', 6); formatted_data = data.copy()
-        for col_tuple in formatted_data.columns: formatted_data[col_tuple] = formatted_data[col_tuple].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
-        for index, row in formatted_data.iterrows():
-            display_index = str(index); self.cell(40, line_height, display_index, 1, 0, 'L')
-            for item in row: self.cell(col_width, line_height, str(item), 1, 0, 'R')
+        self.set_font('Arial', '', 6)
+        for _, row in data_reset.iterrows():
+            display_index = str(row['Conta Bancária']); self.cell(40, line_height, display_index, 1, 0, 'L')
+            for item in row[1:]: self.cell(col_width, line_height, f'{item:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."), 1, 0, 'R')
             self.ln(line_height)
 
 def create_pdf(df):
@@ -236,6 +235,7 @@ if st.sidebar.button("Conciliar Agora"):
                 st.error(f"Ocorreu um erro durante o processamento: {e}")
                 st.session_state['df_resultado'] = None
     else: st.sidebar.warning("Por favor, carregue o seu arquivo de relatório contábil.")
+
 if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is not None:
     resultado = st.session_state['df_resultado']
     if isinstance(resultado, pd.DataFrame):
@@ -243,16 +243,40 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.warning("Processamento concluído. Nenhuma conta correspondente foi encontrada.")
         else:
             st.header("Resultado da Conciliação Consolidada")
-            df_para_mostrar = resultado[(resultado[('Conta Movimento', 'Diferença')].abs() > 0.01) | (resultado[('Aplicação Financeira', 'Diferença')].abs() > 0.01)].copy()
-            if df_para_mostrar.empty:
-                st.success("✅ Ótima notícia! Nenhuma divergência encontrada.")
-            else:
-                st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-                formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in resultado.columns}
-                st.dataframe(df_para_mostrar.style.format(formatter=formatters))
+            # Agora mostramos todas as linhas, pois o outer join já mostra tudo
+            df_para_mostrar = resultado.copy()
+            st.write("A tabela abaixo mostra todas as contas encontradas. As com divergência ou que existem em apenas um dos arquivos estão destacadas.")
+            
+            def highlight_rows(row):
+                is_divergent = abs(row[('Conta Movimento', 'Diferença')]) > 0.01 or abs(row[('Aplicação Financeira', 'Diferença')]) > 0.01
+                is_unmatched = row[('Conta Movimento', 'Saldo Contábil')] == 0 and row[('Aplicação Financeira', 'Saldo Contábil')] == 0 and (row[('Conta Movimento', 'Saldo Extrato')] != 0 or row[('Aplicação Financeira', 'Saldo Extrato')] != 0)
+                if is_divergent or is_unmatched:
+                    return ['background-color: #FFF3CD'] * len(row)
+                return [''] * len(row)
+            
+            formatters = {col: (lambda x: f'R$ {x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in resultado.columns}
+            st.dataframe(df_para_mostrar.style.apply(highlight_rows, axis=1).format(formatter=formatters), use_container_width=True)
+            
             st.header("Download do Relatório Completo")
             col1, col2, col3 = st.columns(3)
             with col1:
                 df_csv = resultado.copy(); df_csv.columns = [' - '.join(map(str,col)).strip() for col in df_csv.columns.values]; st.download_button("Baixar em CSV", df_csv.to_csv(index=True, sep=';', decimal=',').encode('utf-8-sig'), 'relatorio_consolidado.csv', 'text/csv')
             with col2:
                 st.download_button("Baixar em Excel", to_excel(resultado), 'relatorio_consolidado.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            with col3:
+                st.download_button("Baixar em PDF", create_pdf(resultado), 'relatorio_consolidado.pdf', 'application/pdf')
+                
+        st.markdown("---")
+        with st.expander("Clique aqui para auditar os dados de origem"):
+            st.subheader("Auditoria do Arquivo DE-PARA")
+            if 'audit_depara' in st.session_state and st.session_state['audit_depara'] is not None:
+                st.dataframe(st.session_state['audit_depara'], use_container_width=True)
+            st.subheader("Auditoria do Relatório Contábil (Bruto)")
+            if 'audit_contabil' in st.session_state and st.session_state['audit_contabil'] is not None: 
+                st.dataframe(st.session_state['audit_contabil'], use_container_width=True)
+            st.subheader("Auditoria do Extrato do Banco do Brasil (Processado)")
+            if 'audit_bb' in st.session_state and st.session_state['audit_bb'] is not None: 
+                st.dataframe(st.session_state['audit_bb'], use_container_width=True)
+            st.subheader("Auditoria do Extrato da Caixa Econômica (Processado)")
+            if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None: 
+                st.dataframe(st.session_state['audit_cef'], use_container_width=True)
