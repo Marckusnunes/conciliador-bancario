@@ -350,4 +350,3 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
                 st.dataframe(st.session_state['audit_cef'])
 
 
-
