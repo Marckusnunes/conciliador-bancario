@@ -124,12 +124,79 @@ def converter_saldo_hibrido(valor):
             
         return valor_numerico / 100
 
+def converter_saldo_hibrido(valor):
+    """
+    Função auxiliar para o BB. Converte um valor de saldo que pode estar em dois formatos:
+    1. String com formato brasileiro (ex: '1.234,56') -> 1234.56
+    2. String de inteiro representando centavos (ex: '12345') -> 123.45
+    """
+    if valor is None:
+        return 0.0
+    
+    str_valor = str(valor).strip()
+    if not str_valor:
+        return 0.0
+
+    # Se houver vírgula, trata como formato decimal brasileiro
+    if ',' in str_valor:
+        valor_limpo = str_valor.replace('.', '').replace(',', '.')
+        return pd.to_numeric(valor_limpo, errors='coerce')
+    
+    # Se não houver vírgula, trata como inteiro em centavos
+    else:
+        valor_apenas_digitos = re.sub(r'\D', '', str_valor)
+        if not valor_apenas_digitos:
+            return 0.0
+        
+        valor_numerico = pd.to_numeric(valor_apenas_digitos, errors='coerce')
+        if pd.isna(valor_numerico):
+            return 0.0
+            
+        return valor_numerico / 100
+
+def processar_relatorio_contabil(arquivo_carregado, df_depara):
+    """Lê o relatório contábil e aplica a tradução DE-PARA."""
+    df = pd.read_csv(arquivo_carregado, encoding='latin-1', sep=';', header=1)
+
+    df['Chave Primaria'] = df['Domicílio bancário'].apply(gerar_chave_contabil)
+    
+    df.dropna(subset=['Chave Primaria'], inplace=True)
+    df = df[df['Chave Primaria'] != '']
+
+    if not df_depara.empty:
+        df_depara_map = df_depara.copy()
+        df_depara_map['Chave Antiga'] = df_depara_map['Chave Antiga'].astype(str)
+        df['Chave Primaria'] = df['Chave Primaria'].astype(str)
+        
+        mapa_depara = df_depara_map.set_index('Chave Antiga')['Chave Nova'].to_dict()
+        df['Chave Primaria'] = df['Chave Primaria'].replace(mapa_depara)
+
+    # LÓGICA CORRETA PARA FORMATO BRASILEIRO
+    df['Saldo Final'] = pd.to_numeric(
+        df['Saldo Final'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
+        errors='coerce'
+    ).fillna(0)
+
+    df_pivot = df.pivot_table(index='Chave Primaria', columns='Conta contábil', values='Saldo Final', aggfunc='sum').reset_index()
+
+    rename_dict = {c: 'Saldo_Corrente_Contabil' for c in df_pivot.columns if '111111901' in str(c)}
+    rename_dict.update({c: 'Saldo_Aplicado_Contabil' for c in df_pivot.columns if '111115001' in str(c)})
+    df_pivot.rename(columns=rename_dict, inplace=True)
+
+    mapa_conta = df[['Chave Primaria', 'Domicílio bancário']].drop_duplicates().set_index('Chave Primaria')
+    df_final = df_pivot.join(mapa_conta, on='Chave Primaria')
+
+    if 'Saldo_Corrente_Contabil' not in df_final.columns:
+        df_final['Saldo_Corrente_Contabil'] = 0
+    if 'Saldo_Aplicado_Contabil' not in df_final.columns:
+        df_final['Saldo_Aplicado_Contabil'] = 0
+
+    return df, df_final
+
 def processar_extrato_bb_bruto_csv(caminho_arquivo):
     """
-    Lê e transforma o arquivo .csv bruto do Banco do Brasil.
-    Esta versão utiliza uma lógica híbrida para converter os saldos,
-    tratando tanto o formato brasileiro (com vírgula) quanto o formato
-    de inteiro (onde os 2 últimos dígitos são decimais).
+    Lê o extrato do BB. Utiliza a lógica HÍBRIDA para converter os saldos,
+    tratando tanto o formato com vírgula quanto o formato de inteiro/centavos.
     """
     df = pd.read_csv(caminho_arquivo, sep=',', encoding='latin-1', dtype=str)
     df.rename(columns={
@@ -138,14 +205,11 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     }, inplace=True)
     df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
     
-    # --- INÍCIO DA CORREÇÃO HÍBRIDA ---
-    # Aplica a função de conversão em cada valor das colunas de saldo
+    # APLICA A LÓGICA HÍBRIDA
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
             df[col] = df[col].apply(converter_saldo_hibrido).fillna(0)
-    # --- FIM DA CORREÇÃO HÍBRIDA ---
             
-    # Garante que as colunas existam, caso não venham no arquivo original
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
     if 'Saldo_Aplicado_Extrato' not in df.columns:
@@ -154,7 +218,7 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     return df
 
 def processar_extrato_cef_bruto(caminho_arquivo):
-    """Lê o arquivo .cef da Caixa."""
+    """Lê o extrato da CEF, tratando o formato numérico brasileiro."""
     with open(caminho_arquivo, 'r', encoding='latin-1') as f:
         cef_content = f.readlines()
     header_line_index = -1
@@ -171,14 +235,11 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
 
-    # --- INÍCIO DA SEÇÃO DE TRATAMENTO NUMÉRICO ---
-    # Esta lógica já está correta e robusta.
+    # LÓGICA CORRETA PARA FORMATO BRASILEIRO
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
-            # A linha abaixo já faz a limpeza de '.' e a substituição de ',' por '.'
             df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
-    # --- FIM DA SEÇÃO DE TRATAMENTO NUMÉRICO ---
-            
+
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
     if 'Saldo_Aplicado_Extrato' not in df.columns:
@@ -387,6 +448,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
