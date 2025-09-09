@@ -6,7 +6,6 @@ from fpdf import FPDF
 from datetime import datetime
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
-import math # <-- ALTERAÇÃO 1: Importamos o módulo 'math'
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
 
@@ -78,7 +77,7 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
         errors='coerce'
     ).fillna(0)
 
-    df_pivot = df.pivot_table(index='Chave Primaria', columns='Conta contábil', values='Saldo Final', aggfunc='sum', fill_value=0).reset_index()
+    df_pivot = df.pivot_table(index='Chave Primaria', columns='Conta contábil', values='Saldo Final', aggfunc='sum').reset_index()
 
     rename_dict = {c: 'Saldo_Corrente_Contabil' for c in df_pivot.columns if '111111901' in str(c)}
     rename_dict.update({c: 'Saldo_Aplicado_Contabil' for c in df_pivot.columns if '111115001' in str(c)})
@@ -97,8 +96,8 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
 def processar_extrato_bb_bruto_csv(caminho_arquivo):
     """
     Lê e transforma o arquivo .csv bruto do Banco do Brasil.
-    Esta versão foi corrigida para ser mais robusta, limpando todos os caracteres
-    não numéricos antes de tratar o valor como centavos.
+    Esta versão foi corrigida para lidar com formatos numéricos brasileiros (com '.' e ','),
+    garantindo que os saldos sejam convertidos para o tipo numérico corretamente.
     """
     df = pd.read_csv(caminho_arquivo, sep=',', encoding='latin-1', dtype=str)
     df.rename(columns={
@@ -107,13 +106,21 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     }, inplace=True)
     df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
     
+    # --- INÍCIO DA CORREÇÃO ---
+    # Padroniza a conversão de colunas de saldo para o formato numérico
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
+            # 1. Converte a coluna para texto (garantia)
+            # 2. Remove os pontos (separador de milhar)
+            # 3. Substitui a vírgula (separador decimal) por ponto
+            # 4. Converte o texto limpo para número
             df[col] = pd.to_numeric(
-                df[col].astype(str).str.replace(r'\D', '', regex=True), 
+                df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
                 errors='coerce'
-            ).fillna(0) / 100
+            ).fillna(0)
+    # --- FIM DA CORREÇÃO ---
             
+    # Garante que as colunas existam, caso não venham no arquivo original
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
     if 'Saldo_Aplicado_Extrato' not in df.columns:
@@ -139,9 +146,13 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
 
+    # --- INÍCIO DA SEÇÃO DE TRATAMENTO NUMÉRICO ---
+    # Esta lógica já está correta e robusta.
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
+            # A linha abaixo já faz a limpeza de '.' e a substituição de ',' por '.'
             df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
+    # --- FIM DA SEÇÃO DE TRATAMENTO NUMÉRICO ---
             
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
@@ -173,29 +184,6 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
     return df_final
 
 # --- Bloco 2: Funções para Geração de Arquivos ---
-
-# --- ALTERAÇÃO 2: Aprimoramos a função para ser mais robusta ---
-def format_brazilian_currency(value):
-    """
-    Formata um número para o padrão de moeda brasileiro (ex: 1234.56 -> "1.234,56").
-    É independente do 'locale' do sistema, garantindo consistência.
-    """
-    # Verifica se o valor é um número finito (não é NaN nem infinito)
-    if not isinstance(value, (int, float)) or not math.isfinite(value):
-        return "" # Retorna uma string vazia para valores inválidos, limpando a exibição
-
-    # Formata para string com 2 casas decimais, usando '.' como separador.
-    main_part, decimal_part = f"{value:.2f}".split('.')
-    
-    # Adiciona os separadores de milhar ('.') à parte inteira.
-    # Esta lógica funciona corretamente para números negativos também.
-    main_part_reversed = main_part[::-1]
-    parts = [main_part_reversed[i:i+3] for i in range(0, len(main_part_reversed), 3)]
-    main_part_with_dots = '.'.join(parts)[::-1]
-    
-    # Retorna a string final com a ',' como separador decimal.
-    return f"{main_part_with_dots},{decimal_part}"
-
 @st.cache_data
 def to_excel(df):
     output = io.BytesIO()
@@ -238,11 +226,7 @@ class PDF(FPDF):
             for sub_header in sub_headers: self.cell(col_width, line_height, sub_header, 1, 0, 'C')
         self.ln(line_height)
         self.set_font('Arial', '', 6); formatted_data = data.copy()
-        
-        for col_tuple in formatted_data.columns:
-             if pd.api.types.is_numeric_dtype(formatted_data[col_tuple]):
-                formatted_data[col_tuple] = formatted_data[col_tuple].apply(format_brazilian_currency)
-                
+        for col_tuple in formatted_data.columns: formatted_data[col_tuple] = formatted_data[col_tuple].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
         for index, row in formatted_data.iterrows():
             display_index = str(index); self.cell(40, line_height, display_index, 1, 0, 'L')
             for item in row: self.cell(col_width, line_height, str(item), 1, 0, 'R')
@@ -252,8 +236,6 @@ def create_pdf(df):
     pdf = PDF('L', 'mm', 'A4'); pdf.add_page(); pdf.create_table(df); return bytes(pdf.output())
 
 # --- Bloco 3: Interface Web com Streamlit ---
-# Nenhuma alteração necessária neste bloco
-
 st.set_page_config(page_title="Conciliação Bancária", layout="wide", page_icon="🏦")
 st.title("🏦 Prefeitura da Cidade do Rio de Janeiro"); st.header("Controladoria Geral do Município"); st.markdown("---"); st.subheader("Conciliação de Saldos Bancários e Contábeis")
 
@@ -329,10 +311,8 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
                 st.success("✅ Ótima notícia! Nenhuma divergência encontrada.")
             else:
                 st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-                
-                formatters = {col: format_brazilian_currency for col in df_para_mostrar.columns}
+                formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in resultado.columns}
                 st.dataframe(df_para_mostrar.style.format(formatter=formatters))
-
             st.header("Download do Relatório Completo")
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -368,3 +348,5 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
+
