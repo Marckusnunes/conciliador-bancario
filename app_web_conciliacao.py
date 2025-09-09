@@ -71,13 +71,40 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
     return df, df_final
 
 def processar_extrato_bb_bruto_csv(caminho_arquivo):
+    """
+    Lê e transforma o arquivo .csv bruto do Banco do Brasil.
+    Esta versão foi corrigida para considerar os dois últimos dígitos dos valores
+    como casas decimais, dividindo o valor numérico por 100.
+    """
     df = pd.read_csv(caminho_arquivo, sep=',', encoding='latin-1', dtype=str)
-    df.rename(columns={'Saldo em conta': 'Saldo_Corrente_Extrato', 'Saldo investido': 'Saldo_Aplicado_Extrato'}, inplace=True)
+    df.rename(columns={
+        'Saldo em conta': 'Saldo_Corrente_Extrato',
+        'Saldo investido': 'Saldo_Aplicado_Extrato'
+    }, inplace=True)
     df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
+    
+    # --- INÍCIO DA ALTERAÇÃO ---
+    # A lógica de conversão foi ajustada para tratar os valores como inteiros
+    # e dividi-los por 100 para criar as casas decimais.
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
-        if col in df.columns: df[col] = df[col].apply(converter_inteiro_para_decimal)
-    if 'Saldo_Corrente_Extrato' not in df.columns: df['Saldo_Corrente_Extrato'] = 0
-    if 'Saldo_Aplicado_Extrato' not in df.columns: df['Saldo_Aplicado_Extrato'] = 0
+        if col in df.columns:
+            # 1. Garante que a coluna seja do tipo texto.
+            # 2. Remove todos os caracteres NÃO numéricos (pontos, vírgulas, R$, etc.).
+            # 3. Converte o texto limpo para um valor numérico. Em caso de erro, retorna NaN.
+            # 4. Preenche quaisquer valores NaN (resultado de erros ou células vazias) com 0.
+            # 5. Divide todos os valores da coluna por 100 para ajustar os centavos.
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace(r'\D', '', regex=True),
+                errors='coerce'
+            ).fillna(0) / 100
+    # --- FIM DA ALTERAÇÃO ---
+            
+    # Garante que as colunas existam, caso não venham no arquivo original
+    if 'Saldo_Corrente_Extrato' not in df.columns:
+        df['Saldo_Corrente_Extrato'] = 0
+    if 'Saldo_Aplicado_Extrato' not in df.columns:
+        df['Saldo_Aplicado_Extrato'] = 0
+        
     return df
 
 def processar_extrato_cef_bruto(caminho_arquivo):
@@ -250,3 +277,4 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (Processado)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None: 
                 st.dataframe(st.session_state['audit_cef'], use_container_width=True)
+
