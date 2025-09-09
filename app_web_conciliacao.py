@@ -9,32 +9,6 @@ from openpyxl.utils import get_column_letter
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
 
-def converter_inteiro_para_decimal(valor_texto):
-    """
-    Converte uma string de dígitos para um número decimal.
-    Considera os dois últimos dígitos como a parte fracionária.
-    Exemplo: '12345' -> 123.45
-    """
-    if valor_texto is None:
-        return 0.0
-    
-    # Remove caracteres não numéricos e garante que é uma string
-    s = re.sub(r'\D', '', str(valor_texto))
-    
-    # Se a string estiver vazia após a limpeza, retorna 0
-    if not s:
-        return 0.0
-        
-    # Garante que a string tenha pelo menos 3 dígitos para evitar erros com valores pequenos
-    # Ex: '5' -> '005' para representar 0.05
-    s = s.zfill(3)
-    
-    # Insere o ponto decimal antes dos dois últimos dígitos
-    valor_formatado = f"{s[:-2]}.{s[-2:]}"
-    
-    # Converte para float e retorna
-    return float(valor_formatado)
-
 def gerar_chave_padronizada(texto_conta):
     """
     Padroniza a criação da chave para DE-PARA e Extratos.
@@ -122,8 +96,8 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
 def processar_extrato_bb_bruto_csv(caminho_arquivo):
     """
     Lê e transforma o arquivo .csv bruto do Banco do Brasil.
-    Esta versão foi adaptada para considerar os dois últimos dígitos dos valores
-    de saldo como casas decimais.
+    Esta versão foi corrigida para lidar com formatos numéricos brasileiros (com '.' e ','),
+    garantindo que os saldos sejam convertidos para o tipo numérico corretamente.
     """
     df = pd.read_csv(caminho_arquivo, sep=',', encoding='latin-1', dtype=str)
     df.rename(columns={
@@ -132,13 +106,19 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     }, inplace=True)
     df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
     
-    # --- INÍCIO DA ADAPTAÇÃO ---
-    # Converte as colunas de saldo, tratando os dois últimos dígitos como decimais.
+    # --- INÍCIO DA CORREÇÃO ---
+    # Padroniza a conversão de colunas de saldo para o formato numérico
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
-            # Aplica a função de conversão em cada célula da coluna
-            df[col] = df[col].apply(converter_inteiro_para_decimal)
-    # --- FIM DA ADAPTAÇÃO ---
+            # 1. Converte a coluna para texto (garantia)
+            # 2. Remove os pontos (separador de milhar)
+            # 3. Substitui a vírgula (separador decimal) por ponto
+            # 4. Converte o texto limpo para número
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
+                errors='coerce'
+            ).fillna(0)
+    # --- FIM DA CORREÇÃO ---
             
     # Garante que as colunas existam, caso não venham no arquivo original
     if 'Saldo_Corrente_Extrato' not in df.columns:
@@ -166,9 +146,13 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
 
+    # --- INÍCIO DA SEÇÃO DE TRATAMENTO NUMÉRICO ---
+    # Esta lógica já está correta e robusta.
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
+            # A linha abaixo já faz a limpeza de '.' e a substituição de ',' por '.'
             df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
+    # --- FIM DA SEÇÃO DE TRATAMENTO NUMÉRICO ---
             
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
@@ -364,3 +348,5 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
+
