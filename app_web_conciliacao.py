@@ -145,15 +145,20 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         'Saldo Conta Corrente (R$)': 'Saldo_Corrente_Extrato',
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
+
+    # --- INÍCIO DA SEÇÃO DE TRATAMENTO NUMÉRICO ---
+    # Esta lógica já está correta e robusta.
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
+            # A linha abaixo já faz a limpeza de '.' e a substituição de ',' por '.'
             df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
+    # --- FIM DA SEÇÃO DE TRATAMENTO NUMÉRICO ---
+            
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
     if 'Saldo_Aplicado_Extrato' not in df.columns:
         df['Saldo_Aplicado_Extrato'] = 0
     return df
-
 def realizar_conciliacao(df_contabil, df_extrato_unificado):
     """
     Realiza a junção dos dados contábeis e dos extratos, calculando as diferenças.
@@ -357,5 +362,6 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
