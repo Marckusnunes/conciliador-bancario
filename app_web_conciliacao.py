@@ -170,7 +170,7 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
     df_contabil_pivot['Chave Primaria'] = df_contabil_pivot['Chave Primaria'].astype(str)
     df_extrato_pivot['Chave Primaria'] = df_extrato_pivot['Chave Primaria'].astype(str)
 
-    df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Chave Primaria', how='inner')
+    df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Chave Primaria', how='outer')
     if df_final.empty: return pd.DataFrame()
     df_final.rename(columns={'Domicílio bancário': 'Conta Bancária'}, inplace=True)
     df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
@@ -348,5 +348,6 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
