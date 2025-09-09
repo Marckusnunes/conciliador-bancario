@@ -96,8 +96,8 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
 def processar_extrato_bb_bruto_csv(caminho_arquivo):
     """
     Lê e transforma o arquivo .csv bruto do Banco do Brasil.
-    Esta versão foi corrigida para lidar com valores numéricos sem separador decimal,
-    assumindo que os dois últimos dígitos são os centavos.
+    Esta versão foi corrigida para ser mais robusta, limpando todos os caracteres
+    não numéricos antes de tratar o valor como centavos.
     """
     df = pd.read_csv(caminho_arquivo, sep=',', encoding='latin-1', dtype=str)
     df.rename(columns={
@@ -106,21 +106,19 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     }, inplace=True)
     df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
     
-    # --- INÍCIO DA ALTERAÇÃO ---
-    # A lógica foi ajustada para tratar números inteiros como se os
-    # dois últimos dígitos fossem as casas decimais.
+    # --- INÍCIO DA ALTERAÇÃO 1 ---
+    # Lógica de conversão de saldo aprimorada para ser mais robusta.
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
-            # 1. Converte a coluna de texto para um formato numérico.
-            #    O 'errors='coerce'' garante que qualquer valor que não seja
-            #    um número se torne 'NaN' (Not a Number).
-            #    O .fillna(0) substitui esses 'NaN' por 0.
-            numeric_series = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            
-            # 2. Divide todos os valores da série por 100 para ajustar
-            #    as casas decimais. Ex: 12345 se torna 123.45.
-            df[col] = numeric_series / 100
-    # --- FIM DA ALTERAÇÃO ---
+            # 1. Garante que a coluna seja do tipo string.
+            # 2. Remove todos os caracteres que NÃO são dígitos ('.', ',', 'R$', etc.).
+            # 3. Converte a string de dígitos resultante para um número.
+            # 4. Divide por 100 para posicionar corretamente as casas decimais.
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace(r'\D', '', regex=True), 
+                errors='coerce'
+            ).fillna(0) / 100
+    # --- FIM DA ALTERAÇÃO 1 ---
             
     # Garante que as colunas existam, caso não venham no arquivo original
     if 'Saldo_Corrente_Extrato' not in df.columns:
@@ -148,7 +146,6 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
 
-    # Esta lógica para o arquivo da CEF já está correta e não precisa de alteração.
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
@@ -183,6 +180,27 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
     return df_final
 
 # --- Bloco 2: Funções para Geração de Arquivos ---
+
+# --- INÍCIO DA ALTERAÇÃO 2 ---
+# Nova função para formatar números de forma consistente no padrão brasileiro.
+def format_brazilian_currency(value):
+    """
+    Formata um número para o padrão de moeda brasileiro (ex: 1234.56 -> "1.234,56").
+    É independente do 'locale' do sistema, garantindo consistência.
+    """
+    if not isinstance(value, (int, float)):
+        return str(value)
+    # Formata para string com 2 casas decimais, usando '.' como separador.
+    main_part, decimal_part = f"{value:.2f}".split('.')
+    # Adiciona os separadores de milhar ('.') à parte inteira.
+    main_part_reversed = main_part[::-1]
+    parts = [main_part_reversed[i:i+3] for i in range(0, len(main_part_reversed), 3)]
+    main_part_with_dots = '.'.join(parts)[::-1]
+    # Retorna a string final com a ',' como separador decimal.
+    return f"{main_part_with_dots},{decimal_part}"
+# --- FIM DA ALTERAÇÃO 2 ---
+
+
 @st.cache_data
 def to_excel(df):
     output = io.BytesIO()
@@ -225,7 +243,14 @@ class PDF(FPDF):
             for sub_header in sub_headers: self.cell(col_width, line_height, sub_header, 1, 0, 'C')
         self.ln(line_height)
         self.set_font('Arial', '', 6); formatted_data = data.copy()
-        for col_tuple in formatted_data.columns: formatted_data[col_tuple] = formatted_data[col_tuple].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
+        
+        # --- INÍCIO DA ALTERAÇÃO 3 ---
+        # Usa a nova função de formatação para o PDF
+        for col_tuple in formatted_data.columns:
+             if pd.api.types.is_numeric_dtype(formatted_data[col_tuple]):
+                formatted_data[col_tuple] = formatted_data[col_tuple].apply(format_brazilian_currency)
+        # --- FIM DA ALTERAÇÃO 3 ---
+                
         for index, row in formatted_data.iterrows():
             display_index = str(index); self.cell(40, line_height, display_index, 1, 0, 'L')
             for item in row: self.cell(col_width, line_height, str(item), 1, 0, 'R')
@@ -310,8 +335,13 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
                 st.success("✅ Ótima notícia! Nenhuma divergência encontrada.")
             else:
                 st.write("A tabela abaixo mostra apenas as contas com divergência de saldo.")
-                formatters = {col: (lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")) for col in resultado.columns}
+                
+                # --- INÍCIO DA ALTERAÇÃO 4 ---
+                # Usa a nova função para formatar a tabela exibida na tela
+                formatters = {col: format_brazilian_currency for col in df_para_mostrar.columns}
                 st.dataframe(df_para_mostrar.style.format(formatter=formatters))
+                # --- FIM DA ALTERAÇÃO 4 ---
+
             st.header("Download do Relatório Completo")
             col1, col2, col3 = st.columns(3)
             with col1:
