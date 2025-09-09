@@ -96,8 +96,8 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
 def processar_extrato_bb_bruto_csv(caminho_arquivo):
     """
     Lê e transforma o arquivo .csv bruto do Banco do Brasil.
-    Esta versão foi corrigida para lidar com formatos numéricos brasileiros (com '.' e ','),
-    garantindo que os saldos sejam convertidos para o tipo numérico corretamente.
+    Esta versão foi corrigida para lidar com valores numéricos sem separador decimal,
+    assumindo que os dois últimos dígitos são os centavos.
     """
     df = pd.read_csv(caminho_arquivo, sep=',', encoding='latin-1', dtype=str)
     df.rename(columns={
@@ -106,19 +106,21 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     }, inplace=True)
     df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
     
-    # --- INÍCIO DA CORREÇÃO ---
-    # Padroniza a conversão de colunas de saldo para o formato numérico
+    # --- INÍCIO DA ALTERAÇÃO ---
+    # A lógica foi ajustada para tratar números inteiros como se os
+    # dois últimos dígitos fossem as casas decimais.
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
-            # 1. Converte a coluna para texto (garantia)
-            # 2. Remove os pontos (separador de milhar)
-            # 3. Substitui a vírgula (separador decimal) por ponto
-            # 4. Converte o texto limpo para número
-            df[col] = pd.to_numeric(
-                df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
-                errors='coerce'
-            ).fillna(0)
-    # --- FIM DA CORREÇÃO ---
+            # 1. Converte a coluna de texto para um formato numérico.
+            #    O 'errors='coerce'' garante que qualquer valor que não seja
+            #    um número se torne 'NaN' (Not a Number).
+            #    O .fillna(0) substitui esses 'NaN' por 0.
+            numeric_series = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+            # 2. Divide todos os valores da série por 100 para ajustar
+            #    as casas decimais. Ex: 12345 se torna 123.45.
+            df[col] = numeric_series / 100
+    # --- FIM DA ALTERAÇÃO ---
             
     # Garante que as colunas existam, caso não venham no arquivo original
     if 'Saldo_Corrente_Extrato' not in df.columns:
@@ -146,13 +148,10 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
 
-    # --- INÍCIO DA SEÇÃO DE TRATAMENTO NUMÉRICO ---
-    # Esta lógica já está correta e robusta.
+    # Esta lógica para o arquivo da CEF já está correta e não precisa de alteração.
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
-            # A linha abaixo já faz a limpeza de '.' e a substituição de ',' por '.'
             df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
-    # --- FIM DA SEÇÃO DE TRATAMENTO NUMÉRICO ---
             
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
@@ -348,4 +347,3 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
-
