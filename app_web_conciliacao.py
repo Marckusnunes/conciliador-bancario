@@ -96,8 +96,6 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
 def processar_extrato_bb_bruto_csv(caminho_arquivo):
     """
     Lê e transforma o arquivo .csv bruto do Banco do Brasil.
-    Esta versão foi corrigida para lidar com valores numéricos onde os dois 
-    últimos dígitos representam os centavos (ex: '12345' se torna 123.45).
     """
     df = pd.read_csv(caminho_arquivo, sep=',', encoding='latin-1', dtype=str)
     df.rename(columns={
@@ -106,22 +104,17 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     }, inplace=True)
     df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
     
-      # --- INÍCIO DO BLOCO MODIFICADO ---
-    # Converte as colunas de saldo, tratando os valores como inteiros
-    # e dividindo por 1000 para obter os centavos.
-    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato', 'Saldo total']:
+    # --- NOVO ---
+    # Adiciona a coluna de agência como vazia para manter compatibilidade com o extrato da CEF.
+    df['Agencia_Extrato'] = None
+    
+    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
-            # 1. Converte a coluna para texto (garantia).
-            # 2. Remove quaisquer caracteres não numéricos (como R$, pontos ou vírgulas).
-            # 3. Converte o texto limpo para um número.
-            # 4. Divide por 1000 para ajustar os centavos.
             df[col] = pd.to_numeric(
-                df[col].astype(str).str.replace(r'\D', '', regex=True), # Remove tudo que não for dígito
+                df[col].astype(str).str.replace(r'\D', '', regex=True),
                 errors='coerce'
-            ).fillna(0) / 1000
-    # --- FIM DO BLOCO MODIFICADO ---
+            ).fillna(0) / 100
             
-    # Garante que as colunas existam, caso não venham no arquivo original
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
     if 'Saldo_Aplicado_Extrato' not in df.columns:
@@ -130,7 +123,7 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     return df
 
 def processar_extrato_cef_bruto(caminho_arquivo):
-    """Lê o arquivo .cef da Caixa."""
+    """Lê o arquivo .cef da Caixa e extrai o prefixo de banco/agência."""
     with open(caminho_arquivo, 'r', encoding='latin-1') as f:
         cef_content = f.readlines()
     header_line_index = -1
@@ -142,18 +135,19 @@ def processar_extrato_cef_bruto(caminho_arquivo):
     data_io = io.StringIO("".join(cef_content[header_line_index:]))
     df = pd.read_csv(data_io, sep=';', dtype=str)
     df['Chave Primaria'] = df['Conta Vinculada'].apply(gerar_chave_padronizada)
+    
+    # --- NOVO ---
+    # Extrai os 9 primeiros dígitos (banco/agência) da coluna 'Conta Vinculada'.
+    df['Agencia_Extrato'] = df['Conta Vinculada'].str[:9]
+    
     df.rename(columns={
         'Saldo Conta Corrente (R$)': 'Saldo_Corrente_Extrato',
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
 
-    # --- INÍCIO DA SEÇÃO DE TRATAMENTO NUMÉRICO ---
-    # Esta lógica já está correta e robusta.
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
-            # A linha abaixo já faz a limpeza de '.' e a substituição de ',' por '.'
             df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
-    # --- FIM DA SEÇÃO DE TRATAMENTO NUMÉRICO ---
             
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
@@ -161,11 +155,19 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         df['Saldo_Aplicado_Extrato'] = 0
     return df
 
+# --- MODIFICADO ---
 def realizar_conciliacao(df_contabil, df_extrato_unificado):
+    """
+    Realiza a conciliação final, usando a informação de agência do extrato
+    da Caixa para construir a descrição correta da conta.
+    """
     df_contabil_pivot = df_contabil[['Chave Primaria', 'Domicílio bancário', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
+    
+    # Agrupa os extratos e mantém a informação da agência extraída
     df_extrato_pivot = df_extrato_unificado.groupby('Chave Primaria').agg({
         'Saldo_Corrente_Extrato': 'sum',
-        'Saldo_Aplicado_Extrato': 'sum'
+        'Saldo_Aplicado_Extrato': 'sum',
+        'Agencia_Extrato': 'first' # 'first' pega o primeiro valor encontrado (ignora Nulos)
     }).reset_index()
     
     df_contabil_pivot['Chave Primaria'] = df_contabil_pivot['Chave Primaria'].astype(str)
@@ -173,9 +175,30 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
 
     df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Chave Primaria', how='inner')
     if df_final.empty: return pd.DataFrame()
-    df_final.rename(columns={'Domicílio bancário': 'Conta Bancária'}, inplace=True)
+
+    # --- NOVA LÓGICA PARA CRIAR A DESCRIÇÃO DA CONTA ---
+    def criar_descricao_final(row):
+        agencia_extrato = row['Agencia_Extrato']
+        domicilio_contabil = row['Domicílio bancário']
+        
+        # Se a coluna 'Agencia_Extrato' não for nula (ou seja, é uma conta da CEF)
+        if pd.notna(agencia_extrato):
+            try:
+                # Tenta extrair o número da conta da descrição original
+                conta_parte = domicilio_contabil.split('-')[2].strip()
+                return f"{agencia_extrato} - {conta_parte}"
+            except IndexError:
+                # Se o formato original for inesperado, usa a chave como fallback
+                return f"{agencia_extrato} - {row['Chave Primaria']}"
+        else:
+            # Se for nulo (outros bancos), usa a descrição original do arquivo contábil
+            return domicilio_contabil
+
+    df_final['Conta Bancária'] = df_final.apply(criar_descricao_final, axis=1)
+
     df_final['Diferenca_Movimento'] = df_final['Saldo_Corrente_Contabil'] - df_final['Saldo_Corrente_Extrato']
     df_final['Diferenca_Aplicacao'] = df_final['Saldo_Aplicado_Contabil'] - df_final['Saldo_Aplicado_Extrato']
+    
     df_final = df_final.set_index('Conta Bancária')
     df_final = df_final[['Saldo_Corrente_Contabil', 'Saldo_Corrente_Extrato', 'Diferenca_Movimento','Saldo_Aplicado_Contabil', 'Saldo_Aplicado_Extrato', 'Diferenca_Aplicacao']]
     df_final.columns = pd.MultiIndex.from_tuples([
@@ -183,6 +206,7 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
         ('Aplicação Financeira', 'Saldo Contábil'), ('Aplicação Financeira', 'Saldo Extrato'), ('Aplicação Financeira', 'Diferença')
     ], names=['Grupo', 'Item'])
     return df_final
+
 
 # --- Bloco 2: Funções para Geração de Arquivos ---
 @st.cache_data
@@ -237,6 +261,7 @@ def create_pdf(df):
     pdf = PDF('L', 'mm', 'A4'); pdf.add_page(); pdf.create_table(df); return bytes(pdf.output())
 
 # --- Bloco 3: Interface Web com Streamlit ---
+# Nenhuma alteração necessária neste bloco. Pode manter o seu código original.
 st.set_page_config(page_title="Conciliação Bancária", layout="wide", page_icon="🏦")
 st.title("🏦 Prefeitura da Cidade do Rio de Janeiro"); st.header("Controladoria Geral do Município"); st.markdown("---"); st.subheader("Conciliação de Saldos Bancários e Contábeis")
 
@@ -349,3 +374,4 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
