@@ -118,7 +118,7 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
         df[col] = pd.to_numeric(
             df[col].astype(str).str.replace(r'\D', '', regex=True), # Remove tudo que não for dígito
            errors='coerce'
-          ).fillna(0) / 10000
+          ).fillna(0) / 100
     # --- FIM DO BLOCO MODIFICADO ---
             
     # Garante que as colunas existam, caso não venham no arquivo original
@@ -349,6 +349,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
