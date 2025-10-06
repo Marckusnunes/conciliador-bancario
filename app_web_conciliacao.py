@@ -135,8 +135,6 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         cef_content = f.readlines()
         
     header_line_index = -1
-    # Documentação: Procura pela linha de cabeçalho no arquivo.
-    # Esta busca foi aprimorada para aceitar as duas possíveis nomenclaturas.
     for i, line in enumerate(cef_content):
         if line.strip().startswith("Conta Vinculada;") or line.strip().startswith("Nome Conta Vinculada;"):
             header_line_index = i
@@ -149,8 +147,6 @@ def processar_extrato_cef_bruto(caminho_arquivo):
     data_io = io.StringIO("".join(cef_content[header_line_index:]))
     df = pd.read_csv(data_io, sep=';', dtype=str)
     
-    # --- BLOCO ATUALIZADO ---
-    # Documentação: Identifica dinamicamente o nome correto da coluna de conta.
     nome_coluna_conta = None
     if 'Conta Vinculada' in df.columns:
         nome_coluna_conta = 'Conta Vinculada'
@@ -161,7 +157,6 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         st.error("Erro no arquivo da CEF: Não foi possível encontrar a coluna de identificação da conta ('Conta Vinculada' ou 'Nome Conta Vinculada').")
         return pd.DataFrame()
 
-    # Documentação: Usa a variável com o nome da coluna correto para as operações.
     df['Chave Primaria'] = df[nome_coluna_conta].apply(gerar_chave_padronizada)
     df['Agencia_Extrato'] = df[nome_coluna_conta].str[:9]
     
@@ -170,9 +165,17 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
 
+    # --- INÍCIO DO BLOCO MODIFICADO ---
+    # Documentação: Converte as colunas de saldo para formato numérico de forma padronizada.
+    # Este mecanismo remove todos os caracteres não-dígitos e divide o valor
+    # por 100 para representar corretamente os centavos.
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False), errors='coerce').fillna(0)
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace(r'\D', '', regex=True), # Remove tudo que não for dígito
+                errors='coerce'
+            ).fillna(0) / 100
+    # --- FIM DO BLOCO MODIFICADO ---
             
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
@@ -397,3 +400,4 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
