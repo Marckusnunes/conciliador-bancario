@@ -109,7 +109,7 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     # --- INÍCIO DO BLOCO MODIFICADO ---
     # Converte as colunas de saldo, tratando os valores como inteiros
     # e dividindo por 100 para obter os centavos.
-    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
+    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato','Saldo total']:
         if col in df.columns:
             # 1. Converte a coluna para texto (garantia).
             # 2. Remove quaisquer caracteres não numéricos (como R$, pontos ou vírgulas).
@@ -349,6 +349,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
