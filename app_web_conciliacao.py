@@ -93,7 +93,6 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
 
     return df, df_final
 
-# --- MODIFICADO ---
 def processar_extrato_bb_bruto_csv(caminho_arquivo):
     """
     Lê e transforma o arquivo .csv bruto do Banco do Brasil.
@@ -105,9 +104,9 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     }, inplace=True)
     df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
     
-    # Adiciona colunas vazias para manter compatibilidade com o extrato da CEF.
+    # --- NOVO ---
+    # Adiciona a coluna de agência como vazia para manter compatibilidade com o extrato da CEF.
     df['Agencia_Extrato'] = None
-    df['Nome_Extrato'] = None # --- NOVO ---
     
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
         if col in df.columns:
@@ -123,9 +122,8 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
             
     return df
 
-# --- MODIFICADO ---
 def processar_extrato_cef_bruto(caminho_arquivo):
-    """Lê o arquivo .cef da Caixa, extrai o prefixo de agência e o nome da conta."""
+    """Lê o arquivo .cef da Caixa e extrai o prefixo de banco/agência."""
     with open(caminho_arquivo, 'r', encoding='latin-1') as f:
         cef_content = f.readlines()
     header_line_index = -1
@@ -138,13 +136,9 @@ def processar_extrato_cef_bruto(caminho_arquivo):
     df = pd.read_csv(data_io, sep=';', dtype=str)
     df['Chave Primaria'] = df['Conta Vinculada'].apply(gerar_chave_padronizada)
     
-    df['Agencia_Extrato'] = df['Conta Vinculada'].str[:9]
-    
     # --- NOVO ---
-    # Extrai o nome da conta. 
-    # !!! ATENÇÃO: Se o nome da coluna no seu arquivo .cef for diferente de 'Nome Conta Vinculada',
-    # !!! ajuste o texto entre aspas na linha abaixo.
-    df['Nome_Extrato'] = df['Nome Conta Vinculada']
+    # Extrai os 9 primeiros dígitos (banco/agência) da coluna 'Conta Vinculada'.
+    df['Agencia_Extrato'] = df['Conta Vinculada'].str[:9]
     
     df.rename(columns={
         'Saldo Conta Corrente (R$)': 'Saldo_Corrente_Extrato',
@@ -164,16 +158,16 @@ def processar_extrato_cef_bruto(caminho_arquivo):
 # --- MODIFICADO ---
 def realizar_conciliacao(df_contabil, df_extrato_unificado):
     """
-    Realiza a conciliação final, usando a informação de agência e nome da conta
-    do extrato da Caixa para construir a descrição correta.
+    Realiza a conciliação final, usando a informação de agência do extrato
+    da Caixa para construir a descrição correta da conta.
     """
     df_contabil_pivot = df_contabil[['Chave Primaria', 'Domicílio bancário', 'Saldo_Corrente_Contabil', 'Saldo_Aplicado_Contabil']]
     
+    # Agrupa os extratos e mantém a informação da agência extraída
     df_extrato_pivot = df_extrato_unificado.groupby('Chave Primaria').agg({
         'Saldo_Corrente_Extrato': 'sum',
         'Saldo_Aplicado_Extrato': 'sum',
-        'Agencia_Extrato': 'first',
-        'Nome_Extrato': 'first' # --- NOVO ---
+        'Agencia_Extrato': 'first' # 'first' pega o primeiro valor encontrado (ignora Nulos)
     }).reset_index()
     
     df_contabil_pivot['Chave Primaria'] = df_contabil_pivot['Chave Primaria'].astype(str)
@@ -182,21 +176,22 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
     df_final = pd.merge(df_contabil_pivot, df_extrato_pivot, on='Chave Primaria', how='inner')
     if df_final.empty: return pd.DataFrame()
 
-    # --- LÓGICA MODIFICADA PARA CRIAR A DESCRIÇÃO DA CONTA ---
+    # --- NOVA LÓGICA PARA CRIAR A DESCRIÇÃO DA CONTA ---
     def criar_descricao_final(row):
         agencia_extrato = row['Agencia_Extrato']
-        nome_extrato = row['Nome_Extrato'] # --- NOVO ---
         domicilio_contabil = row['Domicílio bancário']
         
+        # Se a coluna 'Agencia_Extrato' não for nula (ou seja, é uma conta da CEF)
         if pd.notna(agencia_extrato):
             try:
+                # Tenta extrair o número da conta da descrição original
                 conta_parte = domicilio_contabil.split('-')[2].strip()
-                # Novo formato: "Agência - Conta - Nome"
-                return f"{agencia_extrato} - {conta_parte} - {nome_extrato}"
+                return f"{agencia_extrato} - {conta_parte}"
             except IndexError:
-                # Formato de fallback
-                return f"{agencia_extrato} - {row['Chave Primaria']} - {nome_extrato}"
+                # Se o formato original for inesperado, usa a chave como fallback
+                return f"{agencia_extrato} - {row['Chave Primaria']}"
         else:
+            # Se for nulo (outros bancos), usa a descrição original do arquivo contábil
             return domicilio_contabil
 
     df_final['Conta Bancária'] = df_final.apply(criar_descricao_final, axis=1)
@@ -266,7 +261,7 @@ def create_pdf(df):
     pdf = PDF('L', 'mm', 'A4'); pdf.add_page(); pdf.create_table(df); return bytes(pdf.output())
 
 # --- Bloco 3: Interface Web com Streamlit ---
-# Nenhuma alteração necessária neste bloco.
+# Nenhuma alteração necessária neste bloco. Pode manter o seu código original.
 st.set_page_config(page_title="Conciliação Bancária", layout="wide", page_icon="🏦")
 st.title("🏦 Prefeitura da Cidade do Rio de Janeiro"); st.header("Controladoria Geral do Município"); st.markdown("---"); st.subheader("Conciliação de Saldos Bancários e Contábeis")
 
