@@ -112,6 +112,8 @@ def processar_relatorio_contabil(arquivo_carregado, df_depara):
 
     return df, df_final
 
+# --- FUNÇÃO ATUALIZADA ---
+
 def processar_extrato_bb_bruto_csv(caminho_arquivo):
     """
     Lê e transforma o arquivo .csv bruto do Banco do Brasil.
@@ -135,16 +137,12 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     # Adiciona a coluna de agência como vazia para manter compatibilidade
     df['Agencia_Extrato'] = None
     
-    # --- BLOCO DE CONVERSÃO ADICIONADO ---
-    # Este bloco converte as colunas de saldo de texto para número.
-    # Esta era a parte que faltava e que causava o erro.
+    # --- BLOCO DE CONVERSÃO ATUALIZADO ---
+    # Agora, usamos a mesma função da CEF para garantir que os valores
+    # sejam lidos exatamente como no documento, sem divisões.
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato', 'Saldo total']:
         if col in df.columns:
-            # Lógica original que você confirmou ser a correta para o BB
-            df[col] = pd.to_numeric(
-                df[col].astype(str).str.replace(r'\D', '', regex=True),
-                errors='coerce'
-            ).fillna(0) / 1000
+            df[col] = df[col].apply(converter_saldo_brasileiro)
     # --- FIM DO BLOCO DE CONVERSÃO ---
             
     # Garante que as colunas de saldo existam no DataFrame final
@@ -425,6 +423,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
