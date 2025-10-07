@@ -8,6 +8,25 @@ from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
+def converter_saldo_brasileiro(valor_texto):
+    """
+    Converte uma string de moeda no formato brasileiro (ex: '1.234,56')
+    para um valor numérico (float).
+    
+    1. Garante que o valor de entrada seja um texto (string).
+    2. Remove o separador de milhar ('.').
+    3. Substitui o separador decimal (',') por ('.').
+    4. Converte a string limpa para um número.
+    5. Se ocorrer qualquer erro, retorna 0.
+    """
+    if not isinstance(valor_texto, str):
+        return 0.0
+    try:
+        # Remove '.' de milhar e substitui ',' de decimal por '.'
+        valor_limpo = valor_texto.replace('.', '', -1).replace(',', '.', -1)
+        return pd.to_numeric(valor_limpo)
+    except (ValueError, TypeError):
+        return 0.0
 
 def gerar_chave_padronizada(texto_conta):
     """
@@ -165,17 +184,14 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
 
-    # --- INÍCIO DO BLOCO MODIFICADO ---
-    # Documentação: Converte as colunas de saldo para formato numérico de forma padronizada.
-    # Este mecanismo remove todos os caracteres não-dígitos e divide o valor
-    # por 10000 para representar corretamente os centavos.
-    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
-        if col in df.columns:
-            df[col] = pd.to_numeric(
-                df[col].astype(str).str.replace(r'\D', '', regex=True), # Remove tudo que não for dígito
-                errors='coerce'
-            ).fillna(0) / 10000
-    # --- FIM DO BLOCO MODIFICADO ---
+  # --- INÍCIO DO BLOCO CORRIGIDO ---
+# Documentação: Converte as colunas de saldo para formato numérico.
+# A função 'converter_saldo_brasileiro' é usada para tratar corretamente
+# o formato de moeda brasileiro (ex: '1.234,56').
+for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
+    if col in df.columns:
+        df[col] = df[col].apply(converter_saldo_brasileiro)
+# --- FIM DO BLOCO CORRIGIDO ---
             
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
@@ -400,6 +416,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
