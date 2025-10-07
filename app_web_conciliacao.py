@@ -8,6 +8,27 @@ from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
 # --- Bloco 1: Lógica Principal da Conciliação ---
+
+def converter_saldo_internacional(valor_texto):
+    """
+    Converte uma string de moeda no formato internacional (ex: '1,234.56')
+    para um valor numérico (float).
+    
+    1. Garante que o valor de entrada seja um texto (string).
+    2. Apenas remove o separador de milhar (','). O ponto já é o
+       separador decimal correto para o Python.
+    3. Converte a string limpa para um número.
+    4. Se ocorrer qualquer erro, retorna 0.
+    """
+    if not isinstance(valor_texto, str):
+        return 0.0
+    try:
+        # Apenas remove as vírgulas de milhar
+        valor_limpo = valor_texto.replace(',', '', -1)
+        return pd.to_numeric(valor_limpo)
+    except (ValueError, TypeError):
+        return 0.0
+
 def converter_saldo_brasileiro(valor_texto):
     """
     Converte uma string de moeda no formato brasileiro (ex: '1.234,56')
@@ -138,11 +159,10 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     df['Agencia_Extrato'] = None
     
     # --- BLOCO DE CONVERSÃO ATUALIZADO ---
-    # Agora, usamos a mesma função da CEF para garantir que os valores
-    # sejam lidos exatamente como no documento, sem divisões.
+    # Agora chama a função correta para o formato internacional do BB.
     for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato', 'Saldo total']:
         if col in df.columns:
-            df[col] = df[col].apply(converter_saldo_brasileiro)
+            df[col] = df[col].apply(converter_saldo_internacional) # <--- MUDANÇA AQUI
     # --- FIM DO BLOCO DE CONVERSÃO ---
             
     # Garante que as colunas de saldo existam no DataFrame final
@@ -423,6 +443,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
