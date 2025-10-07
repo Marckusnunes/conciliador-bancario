@@ -165,24 +165,7 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
 
-    # --- INÍCIO DO BLOCO MODIFICADO ---
-    # Documentação: Converte as colunas de saldo para formato numérico de forma padronizada.
-    # Este mecanismo remove todos os caracteres não-dígitos e divide o valor
-    # por 10000 para representar corretamente os centavos.
-    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
-        if col in df.columns:
-            df[col] = pd.to_numeric(
-                df[col].astype(str).str.replace(r'\D', '', regex=True), # Remove tudo que não for dígito
-                errors='coerce'
-            ).fillna(0) / 10000
-    # --- FIM DO BLOCO MODIFICADO ---
-            
-    if 'Saldo_Corrente_Extrato' not in df.columns:
-        df['Saldo_Corrente_Extrato'] = 0
-    if 'Saldo_Aplicado_Extrato' not in df.columns:
-        df['Saldo_Aplicado_Extrato'] = 0
-        
-    return df
+   
 
 def realizar_conciliacao(df_contabil, df_extrato_unificado):
     """
@@ -400,6 +383,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
