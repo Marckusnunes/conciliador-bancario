@@ -186,7 +186,7 @@ def processar_extrato_cef_bruto(caminho_arquivo):
 
     # CÓDIGO CORRIGIDO ✅
     # ...
-    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
+for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
     if col in df.columns:
         df[col] = df[col].apply(converter_saldo_brasileiro)
     # --- FIM DO BLOCO CORRIGIDO ---
@@ -415,6 +415,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
