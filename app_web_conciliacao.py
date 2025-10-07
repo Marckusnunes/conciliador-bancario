@@ -126,17 +126,6 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     
     # Adiciona a coluna de agência como vazia para manter compatibilidade com o extrato da CEF.
     df['Agencia_Extrato'] = None
-    
-    # --- BLOCO ATUALIZADO ---
-    # Documentação: Converte as colunas de saldo para formato numérico.
-    # Esta lógica remove todos os caracteres não-numéricos do valor em texto
-    # e divide o resultado por 1000, conforme a necessidade do formato de origem do arquivo.
-    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato', 'Saldo total']:
-        if col in df.columns:
-            df[col] = pd.to_numeric(
-                df[col].astype(str).str.replace(r'\D', '', regex=True), # Remove tudo que não for dígito
-                errors='coerce'
-            ).fillna(0) / 1000
             
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
@@ -415,6 +404,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
