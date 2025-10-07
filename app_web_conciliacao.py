@@ -117,16 +117,37 @@ def processar_extrato_bb_bruto_csv(caminho_arquivo):
     Lê e transforma o arquivo .csv bruto do Banco do Brasil.
     """
     df = pd.read_csv(caminho_arquivo, sep=',', encoding='latin-1', dtype=str)
+    
+    # Padroniza os nomes das colunas importantes
     df.rename(columns={
+        'Conta': 'Conta', # Ajuste se o nome no seu CSV for diferente
         'Saldo em conta': 'Saldo_Corrente_Extrato',
         'Saldo investido': 'Saldo_Aplicado_Extrato'
-        # Adicione outros renames aqui se necessário, como para 'Saldo total'
     }, inplace=True)
-    df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
-    
-    # Adiciona a coluna de agência como vazia para manter compatibilidade com o extrato da CEF.
+
+    # Cria a chave primária a partir da coluna 'Conta' já padronizada
+    if 'Conta' in df.columns:
+        df['Chave Primaria'] = df['Conta'].apply(gerar_chave_padronizada)
+    else:
+        st.error("Erro no arquivo do BB: A coluna 'Conta' não foi encontrada. Verifique o df.rename.")
+        return pd.DataFrame()
+
+    # Adiciona a coluna de agência como vazia para manter compatibilidade
     df['Agencia_Extrato'] = None
+    
+    # --- BLOCO DE CONVERSÃO ADICIONADO ---
+    # Este bloco converte as colunas de saldo de texto para número.
+    # Esta era a parte que faltava e que causava o erro.
+    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato', 'Saldo total']:
+        if col in df.columns:
+            # Lógica original que você confirmou ser a correta para o BB
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace(r'\D', '', regex=True),
+                errors='coerce'
+            ).fillna(0) / 1000
+    # --- FIM DO BLOCO DE CONVERSÃO ---
             
+    # Garante que as colunas de saldo existam no DataFrame final
     if 'Saldo_Corrente_Extrato' not in df.columns:
         df['Saldo_Corrente_Extrato'] = 0
     if 'Saldo_Aplicado_Extrato' not in df.columns:
@@ -404,6 +425,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
