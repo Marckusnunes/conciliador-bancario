@@ -184,20 +184,20 @@ def processar_extrato_cef_bruto(caminho_arquivo):
         'Saldo Aplicado (R$)': 'Saldo_Aplicado_Extrato'
     }, inplace=True)
 
-# CÓDIGO CORRIGIDO ✅
-# ...
-for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
+    # CÓDIGO CORRIGIDO ✅
+    # ...
+    for col in ['Saldo_Corrente_Extrato', 'Saldo_Aplicado_Extrato']:
     if col in df.columns:
         df[col] = df[col].apply(converter_saldo_brasileiro)
-# --- FIM DO BLOCO CORRIGIDO ---
+    # --- FIM DO BLOCO CORRIGIDO ---
 
 # Alinhe estas próximas linhas com o "for" acima
-if 'Saldo_Corrente_Extrato' not in df.columns:
+    if 'Saldo_Corrente_Extrato' not in df.columns:
     df['Saldo_Corrente_Extrato'] = 0
-if 'Saldo_Aplicado_Extrato' not in df.columns:
+    if 'Saldo_Aplicado_Extrato' not in df.columns:
     df['Saldo_Aplicado_Extrato'] = 0
 
-return df
+    return df
 
 def realizar_conciliacao(df_contabil, df_extrato_unificado):
     """
@@ -415,6 +415,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
