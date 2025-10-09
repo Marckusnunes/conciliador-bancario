@@ -308,6 +308,8 @@ def to_excel(df): # <--- ESTA LINHA ESTAVA FALTANDO
             adjusted_width = (max_length + 2); worksheet.column_dimensions[column_letter].width = adjusted_width
     return output.getvalue()
 
+# --- Bloco a ser SUBSTITUÍDO no seu código (substitua a classe PDF e a função create_pdf) ---
+
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -323,10 +325,13 @@ class PDF(FPDF):
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
 
+    # --- MÉTODO ATUALIZADO ---
     def create_table(self, data):
+        # --- Bloco de cálculo de largura (sem alterações) ---
         padding = 5 
         index_name = data.index.name if data.index.name else 'ID'
         sub_headers = ['Saldo Contábil', 'Saldo Extrato', 'Diferença'] * 2
+        
         self.set_font('Arial', 'B', 8)
         max_index_width = self.get_string_width(index_name)
         self.set_font('Arial', '', 6)
@@ -336,7 +341,14 @@ class PDF(FPDF):
         col_widths = []
         formatted_data = data.copy()
         for i, col_tuple in enumerate(data.columns):
-            formatted_data[col_tuple] = data[col_tuple].apply(lambda x: f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", "."))
+            # --- ALTERADO: Lógica de formatação para tratar 'nan' ---
+            # Documentação: A função lambda agora verifica se o valor é nulo (NaN).
+            # Se for, retorna '-', senão, formata o número como antes.
+            formatted_data[col_tuple] = data[col_tuple].apply(
+                lambda x: '-' if pd.isna(x) else f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")
+            )
+            # --- FIM DA ALTERAÇÃO ---
+            
             self.set_font('Arial', 'B', 7)
             max_w = self.get_string_width(sub_headers[i])
             self.set_font('Arial', '', 6)
@@ -345,16 +357,26 @@ class PDF(FPDF):
             col_widths.append(max_w)
             
         col_widths = [max_index_width + padding] + [w + padding for w in col_widths]
+        
+        # --- NOVO: Bloco para centralizar a tabela ---
+        # Documentação: Calcula a largura total da tabela e a posição X inicial
+        # para que a tabela fique centralizada na página.
+        total_table_width = sum(col_widths)
+        start_x = (self.w - total_table_width) / 2
+        # --- FIM DO BLOCO NOVO ---
 
         line_height = self.font_size * 2.5
         
+        # --- Desenho da tabela com larguras dinâmicas e centralização ---
         self.set_font('Arial', 'B', 8)
+        self.set_x(start_x) # Posiciona o cursor para o início da tabela
         self.cell(col_widths[0], line_height, index_name, 1, 0, 'C')
         self.cell(sum(col_widths[1:4]), line_height, 'Conta Movimento', 1, 0, 'C')
         self.cell(sum(col_widths[4:7]), line_height, 'Aplicação Financeira', 1, 0, 'C')
         self.ln(line_height)
         
         self.set_font('Arial', 'B', 7)
+        self.set_x(start_x) # Reposiciona para a próxima linha
         self.cell(col_widths[0], line_height, '', 1, 0, 'C')
         for i, sub_header in enumerate(sub_headers):
             self.cell(col_widths[i+1], line_height, sub_header, 1, 0, 'C')
@@ -362,6 +384,7 @@ class PDF(FPDF):
         
         self.set_font('Arial', '', 6)
         for index, row in formatted_data.iterrows():
+            self.set_x(start_x) # Reposiciona para cada linha de dados
             display_index = str(index)
             self.cell(col_widths[0], line_height, display_index, 1, 0, 'L')
             for i, item in enumerate(row):
@@ -369,7 +392,11 @@ class PDF(FPDF):
             self.ln(line_height)
 
 def create_pdf(df):
-    pdf = PDF('L', 'mm', 'A4'); pdf.add_page(); pdf.create_table(df); return bytes(pdf.output())
+    pdf = PDF('L', 'mm', 'A4')
+    pdf.add_page()
+    pdf.create_table(df)
+    return bytes(pdf.output())
+    
 # --- Bloco 3: Interface Web com Streamlit ---
 st.set_page_config(page_title="Conciliação Bancária", layout="wide", page_icon="🏦")
 st.title("🏦 Prefeitura da Cidade do Rio de Janeiro"); st.header("Controladoria Geral do Município"); st.markdown("---"); st.subheader("Conciliação de Saldos Bancários e Contábeis")
@@ -483,6 +510,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
