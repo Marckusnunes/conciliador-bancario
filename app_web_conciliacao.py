@@ -389,7 +389,7 @@ class PDF(FPDF):
 
 def create_pdf(df):
     pdf = PDF('L', 'mm', 'A4')
-    pdf.b_margin = 25
+    pdf.b_margin = 40
     pdf.add_page()
     pdf.create_table(df)
     return bytes(pdf.output())
@@ -507,6 +507,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
