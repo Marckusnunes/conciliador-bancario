@@ -278,7 +278,35 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
     return df_final
 
 
-# --- Bloco a ser SUBSTITUÍDO no seu código (substitua a classe PDF inteira) ---
+# --- Bloco 2: Funções para Geração de Arquivos ---
+@st.cache_data
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=True, sheet_name='Conciliacao', startrow=1)
+        workbook = writer.book
+        worksheet = writer.sheets['Conciliacao']
+        font_header = Font(bold=True, color="FFFFFF")
+        align_header = Alignment(horizontal='center', vertical='center')
+        fill_header = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        border_thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+        number_format_br = '#,##0.00'
+        worksheet.merge_cells('B1:D1'); cell_movimento = worksheet['B1']; cell_movimento.value = 'Conta Movimento'; cell_movimento.font = font_header; cell_movimento.alignment = align_header; cell_movimento.fill = fill_header
+        worksheet.merge_cells('E1:G1'); cell_aplicacao = worksheet['E1']; cell_aplicacao.value = 'Aplicação Financeira'; cell_aplicacao.font = font_header; cell_aplicacao.alignment = align_header; cell_aplicacao.fill = fill_header
+        for row in worksheet['A2:G2']:
+            for cell in row: cell.font = Font(bold=True); cell.alignment = Alignment(horizontal='center', vertical='center')
+        for col_idx, col in enumerate(worksheet.columns, 1):
+            max_length = 0; column_letter = get_column_letter(col_idx)
+            for cell_idx, cell in enumerate(col, 0):
+                if cell_idx > 0: cell.border = border_thin
+                if cell_idx > 1:
+                    if col_idx == 1: cell.alignment = Alignment(horizontal='left', vertical='center')
+                    else: cell.number_format = number_format_br; cell.alignment = Alignment(horizontal='right', vertical='center')
+                try:
+                    if len(str(cell.value)) > max_length: max_length = len(str(cell.value))
+                except: pass
+            adjusted_width = (max_length + 2); worksheet.column_dimensions[column_letter].width = adjusted_width
+    return output.getvalue()
 
 class PDF(FPDF):
     def header(self):
@@ -313,13 +341,9 @@ class PDF(FPDF):
             self.cell(col_widths[i+1], line_height, sub_header, 1, 0, 'C')
         self.ln(line_height)
 
-    # --- MÉTODO PRINCIPAL ATUALIZADO ---
     def create_table(self, data):
-        # --- NOVO E ESSENCIAL ---
-        # Documentação: Desativa a quebra de página automática da FPDF.
-        # A partir de agora, nosso código manual é o único responsável por isso.
+        # Desativa a quebra de página automática da FPDF.
         self.set_auto_page_break(False)
-        # --- FIM DA ALTERAÇÃO ---
 
         padding = 5 
         index_name = data.index.name if data.index.name else 'ID'
@@ -353,7 +377,6 @@ class PDF(FPDF):
         
         self.set_font('Arial', '', 6)
         for index, row in formatted_data.iterrows():
-            # A verificação de quebra de página agora funciona como esperado
             if self.get_y() + line_height > (self.h - self.b_margin):
                 self.add_page(self.cur_orientation)
                 self._draw_table_header(col_widths, line_height, start_x, index_name, sub_headers)
@@ -485,6 +508,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
