@@ -280,38 +280,11 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
 
 # --- Bloco 2: Funções para Geração de Arquivos ---
 @st.cache_data
-def to_excel(df): # <--- ESTA LINHA ESTAVA FALTANDO
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=True, sheet_name='Conciliacao', startrow=1)
-        workbook = writer.book
-        worksheet = writer.sheets['Conciliacao']
-        font_header = Font(bold=True, color="FFFFFF")
-        align_header = Alignment(horizontal='center', vertical='center')
-        fill_header = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
-        border_thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        number_format_br = '#,##0.00'
-        worksheet.merge_cells('B1:D1'); cell_movimento = worksheet['B1']; cell_movimento.value = 'Conta Movimento'; cell_movimento.font = font_header; cell_movimento.alignment = align_header; cell_movimento.fill = fill_header
-        worksheet.merge_cells('E1:G1'); cell_aplicacao = worksheet['E1']; cell_aplicacao.value = 'Aplicação Financeira'; cell_aplicacao.font = font_header; cell_aplicacao.alignment = align_header; cell_aplicacao.fill = fill_header
-        for row in worksheet['A2:G2']:
-            for cell in row: cell.font = Font(bold=True); cell.alignment = Alignment(horizontal='center', vertical='center')
-        for col_idx, col in enumerate(worksheet.columns, 1):
-            max_length = 0; column_letter = get_column_letter(col_idx)
-            for cell_idx, cell in enumerate(col, 0):
-                if cell_idx > 0: cell.border = border_thin
-                if cell_idx > 1:
-                    if col_idx == 1: cell.alignment = Alignment(horizontal='left', vertical='center')
-                    else: cell.number_format = number_format_br; cell.alignment = Alignment(horizontal='right', vertical='center')
-                try:
-                    if len(str(cell.value)) > max_length: max_length = len(str(cell.value))
-                except: pass
-            adjusted_width = (max_length + 2); worksheet.column_dimensions[column_letter].width = adjusted_width
-    return output.getvalue()
-
-# --- Bloco a ser SUBSTITUÍDO no seu código (substitua a classe PDF e a função create_pdf) ---
+# --- Bloco a ser SUBSTITUÍDO no seu código (substitua a classe PDF inteira) ---
 
 class PDF(FPDF):
     def header(self):
+        # Este é o cabeçalho GERAL da página, que já se repete automaticamente.
         self.set_font('Arial', 'B', 12)
         self.cell(0, 8, 'Prefeitura da Cidade do Rio de Janeiro', 0, 1, 'C')
         self.set_font('Arial', '', 11)
@@ -325,9 +298,29 @@ class PDF(FPDF):
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
 
-    # --- MÉTODO ATUALIZADO ---
+    # --- NOVO: Função auxiliar para desenhar o cabeçalho da TABELA ---
+    # Documentação: Esta função isola a lógica de desenho do cabeçalho da tabela
+    # para que possa ser reutilizada no início da tabela e em cada nova página.
+    def _draw_table_header(self, col_widths, line_height, start_x, index_name, sub_headers):
+        # Desenha o cabeçalho principal
+        self.set_font('Arial', 'B', 8)
+        self.set_x(start_x)
+        self.cell(col_widths[0], line_height, index_name, 1, 0, 'C')
+        self.cell(sum(col_widths[1:4]), line_height, 'Conta Movimento', 1, 0, 'C')
+        self.cell(sum(col_widths[4:7]), line_height, 'Aplicação Financeira', 1, 0, 'C')
+        self.ln(line_height)
+        
+        # Desenha os sub-cabeçalhos
+        self.set_font('Arial', 'B', 7)
+        self.set_x(start_x)
+        self.cell(col_widths[0], line_height, '', 1, 0, 'C')
+        for i, sub_header in enumerate(sub_headers):
+            self.cell(col_widths[i+1], line_height, sub_header, 1, 0, 'C')
+        self.ln(line_height)
+
+    # --- MÉTODO PRINCIPAL ATUALIZADO ---
     def create_table(self, data):
-        # --- Bloco de cálculo de largura (sem alterações) ---
+        # Bloco de cálculo de largura e formatação (sem alterações)
         padding = 5 
         index_name = data.index.name if data.index.name else 'ID'
         sub_headers = ['Saldo Contábil', 'Saldo Extrato', 'Diferença'] * 2
@@ -341,14 +334,9 @@ class PDF(FPDF):
         col_widths = []
         formatted_data = data.copy()
         for i, col_tuple in enumerate(data.columns):
-            # --- ALTERADO: Lógica de formatação para tratar 'nan' ---
-            # Documentação: A função lambda agora verifica se o valor é nulo (NaN).
-            # Se for, retorna '-', senão, formata o número como antes.
             formatted_data[col_tuple] = data[col_tuple].apply(
                 lambda x: '-' if pd.isna(x) else f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")
             )
-            # --- FIM DA ALTERAÇÃO ---
-            
             self.set_font('Arial', 'B', 7)
             max_w = self.get_string_width(sub_headers[i])
             self.set_font('Arial', '', 6)
@@ -357,34 +345,28 @@ class PDF(FPDF):
             col_widths.append(max_w)
             
         col_widths = [max_index_width + padding] + [w + padding for w in col_widths]
-        
-        # --- NOVO: Bloco para centralizar a tabela ---
-        # Documentação: Calcula a largura total da tabela e a posição X inicial
-        # para que a tabela fique centralizada na página.
         total_table_width = sum(col_widths)
         start_x = (self.w - total_table_width) / 2
-        # --- FIM DO BLOCO NOVO ---
-
         line_height = self.font_size * 2.5
         
-        # --- Desenho da tabela com larguras dinâmicas e centralização ---
-        self.set_font('Arial', 'B', 8)
-        self.set_x(start_x) # Posiciona o cursor para o início da tabela
-        self.cell(col_widths[0], line_height, index_name, 1, 0, 'C')
-        self.cell(sum(col_widths[1:4]), line_height, 'Conta Movimento', 1, 0, 'C')
-        self.cell(sum(col_widths[4:7]), line_height, 'Aplicação Financeira', 1, 0, 'C')
-        self.ln(line_height)
+        # --- ALTERADO: Desenho inicial do cabeçalho ---
+        # Documentação: Agora chama a nova função auxiliar para desenhar o primeiro cabeçalho.
+        self._draw_table_header(col_widths, line_height, start_x, index_name, sub_headers)
         
-        self.set_font('Arial', 'B', 7)
-        self.set_x(start_x) # Reposiciona para a próxima linha
-        self.cell(col_widths[0], line_height, '', 1, 0, 'C')
-        for i, sub_header in enumerate(sub_headers):
-            self.cell(col_widths[i+1], line_height, sub_header, 1, 0, 'C')
-        self.ln(line_height)
-        
+        # Desenha os dados
         self.set_font('Arial', '', 6)
         for index, row in formatted_data.iterrows():
-            self.set_x(start_x) # Reposiciona para cada linha de dados
+            # --- NOVO: Verificação de quebra de página ---
+            # Documentação: Verifica se a próxima linha caberá na página atual.
+            # (self.h - self.b_margin) é a área útil vertical da página.
+            if self.get_y() + line_height > (self.h - self.b_margin):
+                self.add_page(self.cur_orientation)
+                # Redesenha o cabeçalho na nova página
+                self._draw_table_header(col_widths, line_height, start_x, index_name, sub_headers)
+                self.set_font('Arial', '', 6) # Restaura a fonte para os dados
+            # --- FIM DA VERIFICAÇÃO ---
+
+            self.set_x(start_x)
             display_index = str(index)
             self.cell(col_widths[0], line_height, display_index, 1, 0, 'L')
             for i, item in enumerate(row):
@@ -510,6 +492,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
