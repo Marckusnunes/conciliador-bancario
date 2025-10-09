@@ -308,6 +308,8 @@ def to_excel(df):
             adjusted_width = (max_length + 2); worksheet.column_dimensions[column_letter].width = adjusted_width
     return output.getvalue()
 
+# --- Bloco 1 de 2 a ser SUBSTITUÍDO (a classe PDF inteira) ---
+
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
@@ -375,7 +377,11 @@ class PDF(FPDF):
         
         self.set_font('Arial', '', 7)
         for index, row in formatted_data.iterrows():
-            if self.get_y() + line_height > (self.h - self.b_margin):
+            # --- ALTERAÇÃO CRUCIAL ---
+            # Documentação: Em vez de usar (self.h - self.b_margin), usamos um
+            # limite vertical absoluto de 180mm. Para uma página A4 paisagem (210mm),
+            # isso deixa 30mm de espaço no fundo, protegendo o rodapé.
+            if self.get_y() + line_height > 180:
                 self.add_page(self.cur_orientation)
                 self._draw_table_header(col_widths, line_height, start_x, index_name, sub_headers)
                 self.set_font('Arial', '', 7)
@@ -387,9 +393,11 @@ class PDF(FPDF):
                 self.cell(col_widths[i+1], line_height, str(item), 1, 0, 'R')
             self.ln(line_height)
 
+# --- Bloco 2 de 2 a ser SUBSTITUÍDO (a função create_pdf) ---
+
 def create_pdf(df):
     pdf = PDF('L', 'mm', 'A4')
-    pdf.b_margin = 40
+    # A linha "pdf.b_margin = 40" foi removida pois não é mais necessária.
     pdf.add_page()
     pdf.create_table(df)
     return bytes(pdf.output())
@@ -507,6 +515,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
