@@ -278,35 +278,7 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
     return df_final
 
 
-# --- Bloco 2: Funções para Geração de Arquivos ---
-@st.cache_data
-def to_excel(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=True, sheet_name='Conciliacao', startrow=1)
-        workbook = writer.book
-        worksheet = writer.sheets['Conciliacao']
-        font_header = Font(bold=True, color="FFFFFF")
-        align_header = Alignment(horizontal='center', vertical='center')
-        fill_header = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
-        border_thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        number_format_br = '#,##0.00'
-        worksheet.merge_cells('B1:D1'); cell_movimento = worksheet['B1']; cell_movimento.value = 'Conta Movimento'; cell_movimento.font = font_header; cell_movimento.alignment = align_header; cell_movimento.fill = fill_header
-        worksheet.merge_cells('E1:G1'); cell_aplicacao = worksheet['E1']; cell_aplicacao.value = 'Aplicação Financeira'; cell_aplicacao.font = font_header; cell_aplicacao.alignment = align_header; cell_aplicacao.fill = fill_header
-        for row in worksheet['A2:G2']:
-            for cell in row: cell.font = Font(bold=True); cell.alignment = Alignment(horizontal='center', vertical='center')
-        for col_idx, col in enumerate(worksheet.columns, 1):
-            max_length = 0; column_letter = get_column_letter(col_idx)
-            for cell_idx, cell in enumerate(col, 0):
-                if cell_idx > 0: cell.border = border_thin
-                if cell_idx > 1:
-                    if col_idx == 1: cell.alignment = Alignment(horizontal='left', vertical='center')
-                    else: cell.number_format = number_format_br; cell.alignment = Alignment(horizontal='right', vertical='center')
-                try:
-                    if len(str(cell.value)) > max_length: max_length = len(str(cell.value))
-                except: pass
-            adjusted_width = (max_length + 2); worksheet.column_dimensions[column_letter].width = adjusted_width
-    return output.getvalue()
+# --- Bloco a ser SUBSTITUÍDO no seu código (substitua a classe PDF e a função create_pdf) ---
 
 class PDF(FPDF):
     def header(self):
@@ -325,16 +297,16 @@ class PDF(FPDF):
         self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
 
     def _draw_table_header(self, col_widths, line_height, start_x, index_name, sub_headers):
-        # Desenha o cabeçalho principal
-        self.set_font('Arial', 'B', 8)
+        # --- ALTERADO: Aumento da fonte do cabeçalho ---
+        self.set_font('Arial', 'B', 9) # Aumentado de 8 para 9
         self.set_x(start_x)
         self.cell(col_widths[0], line_height, index_name, 1, 0, 'C')
         self.cell(sum(col_widths[1:4]), line_height, 'Conta Movimento', 1, 0, 'C')
         self.cell(sum(col_widths[4:7]), line_height, 'Aplicação Financeira', 1, 0, 'C')
         self.ln(line_height)
         
-        # Desenha os sub-cabeçalhos
-        self.set_font('Arial', 'B', 7)
+        # --- ALTERADO: Aumento da fonte do sub-cabeçalho ---
+        self.set_font('Arial', 'B', 8) # Aumentado de 7 para 8
         self.set_x(start_x)
         self.cell(col_widths[0], line_height, '', 1, 0, 'C')
         for i, sub_header in enumerate(sub_headers):
@@ -342,16 +314,16 @@ class PDF(FPDF):
         self.ln(line_height)
 
     def create_table(self, data):
-        # Desativa a quebra de página automática da FPDF.
         self.set_auto_page_break(False)
 
         padding = 5 
         index_name = data.index.name if data.index.name else 'ID'
         sub_headers = ['Saldo Contábil', 'Saldo Extrato', 'Diferença'] * 2
         
-        self.set_font('Arial', 'B', 8)
+        # --- ALTERADO: Aumento das fontes para cálculo de largura ---
+        self.set_font('Arial', 'B', 9) # Aumentado de 8 para 9 (para o título do índice)
         max_index_width = self.get_string_width(index_name)
-        self.set_font('Arial', '', 6)
+        self.set_font('Arial', '', 7) # Aumentado de 6 para 7 (para os dados do índice)
         for item in data.index:
             max_index_width = max(max_index_width, self.get_string_width(str(item)))
         
@@ -361,9 +333,9 @@ class PDF(FPDF):
             formatted_data[col_tuple] = data[col_tuple].apply(
                 lambda x: '-' if pd.isna(x) else f'{x:,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".")
             )
-            self.set_font('Arial', 'B', 7)
+            self.set_font('Arial', 'B', 8) # Aumentado de 7 para 8 (sub-cabeçalho)
             max_w = self.get_string_width(sub_headers[i])
-            self.set_font('Arial', '', 6)
+            self.set_font('Arial', '', 7) # Aumentado de 6 para 7 (dados)
             for item in formatted_data[col_tuple]:
                 max_w = max(max_w, self.get_string_width(str(item)))
             col_widths.append(max_w)
@@ -371,16 +343,19 @@ class PDF(FPDF):
         col_widths = [max_index_width + padding] + [w + padding for w in col_widths]
         total_table_width = sum(col_widths)
         start_x = (self.w - total_table_width) / 2
-        line_height = self.font_size * 2.5
+        
+        # --- ALTERADO: Cálculo da altura da linha com base na nova fonte de dados ---
+        self.set_font('Arial', '', 7) # Garante que a fonte base seja a dos dados
+        line_height = self.font_size * 2.5 # Recalcula a altura da linha
         
         self._draw_table_header(col_widths, line_height, start_x, index_name, sub_headers)
         
-        self.set_font('Arial', '', 6)
+        self.set_font('Arial', '', 7) # Define a fonte para as linhas de dados
         for index, row in formatted_data.iterrows():
             if self.get_y() + line_height > (self.h - self.b_margin):
                 self.add_page(self.cur_orientation)
                 self._draw_table_header(col_widths, line_height, start_x, index_name, sub_headers)
-                self.set_font('Arial', '', 6)
+                self.set_font('Arial', '', 7)
 
             self.set_x(start_x)
             display_index = str(index)
@@ -389,8 +364,13 @@ class PDF(FPDF):
                 self.cell(col_widths[i+1], line_height, str(item), 1, 0, 'R')
             self.ln(line_height)
 
+# --- FUNÇÃO ATUALIZADA ---
 def create_pdf(df):
     pdf = PDF('L', 'mm', 'A4')
+    # --- NOVO: Define margens explicitamente para proteger o rodapé ---
+    # Documentação: A margem inferior (b_margin) agora é 25mm, criando mais
+    # espaço livre acima do rodapé, que começa a 15mm do fundo.
+    pdf.b_margin = 25
     pdf.add_page()
     pdf.create_table(df)
     return bytes(pdf.output())
@@ -508,6 +488,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
