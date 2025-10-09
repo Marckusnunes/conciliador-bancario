@@ -278,8 +278,6 @@ def realizar_conciliacao(df_contabil, df_extrato_unificado):
     return df_final
 
 
-# --- Bloco 2: Funções para Geração de Arquivos ---
-@st.cache_data
 # --- Bloco a ser SUBSTITUÍDO no seu código (substitua a classe PDF inteira) ---
 
 class PDF(FPDF):
@@ -298,9 +296,6 @@ class PDF(FPDF):
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
 
-    # --- NOVO: Função auxiliar para desenhar o cabeçalho da TABELA ---
-    # Documentação: Esta função isola a lógica de desenho do cabeçalho da tabela
-    # para que possa ser reutilizada no início da tabela e em cada nova página.
     def _draw_table_header(self, col_widths, line_height, start_x, index_name, sub_headers):
         # Desenha o cabeçalho principal
         self.set_font('Arial', 'B', 8)
@@ -320,7 +315,12 @@ class PDF(FPDF):
 
     # --- MÉTODO PRINCIPAL ATUALIZADO ---
     def create_table(self, data):
-        # Bloco de cálculo de largura e formatação (sem alterações)
+        # --- NOVO E ESSENCIAL ---
+        # Documentação: Desativa a quebra de página automática da FPDF.
+        # A partir de agora, nosso código manual é o único responsável por isso.
+        self.set_auto_page_break(False)
+        # --- FIM DA ALTERAÇÃO ---
+
         padding = 5 
         index_name = data.index.name if data.index.name else 'ID'
         sub_headers = ['Saldo Contábil', 'Saldo Extrato', 'Diferença'] * 2
@@ -349,22 +349,15 @@ class PDF(FPDF):
         start_x = (self.w - total_table_width) / 2
         line_height = self.font_size * 2.5
         
-        # --- ALTERADO: Desenho inicial do cabeçalho ---
-        # Documentação: Agora chama a nova função auxiliar para desenhar o primeiro cabeçalho.
         self._draw_table_header(col_widths, line_height, start_x, index_name, sub_headers)
         
-        # Desenha os dados
         self.set_font('Arial', '', 6)
         for index, row in formatted_data.iterrows():
-            # --- NOVO: Verificação de quebra de página ---
-            # Documentação: Verifica se a próxima linha caberá na página atual.
-            # (self.h - self.b_margin) é a área útil vertical da página.
+            # A verificação de quebra de página agora funciona como esperado
             if self.get_y() + line_height > (self.h - self.b_margin):
                 self.add_page(self.cur_orientation)
-                # Redesenha o cabeçalho na nova página
                 self._draw_table_header(col_widths, line_height, start_x, index_name, sub_headers)
-                self.set_font('Arial', '', 6) # Restaura a fonte para os dados
-            # --- FIM DA VERIFICAÇÃO ---
+                self.set_font('Arial', '', 6)
 
             self.set_x(start_x)
             display_index = str(index)
@@ -492,6 +485,7 @@ if 'df_resultado' in st.session_state and st.session_state['df_resultado'] is no
             st.subheader("Auditoria do Extrato da Caixa Econômica (com Chave Primária)")
             if 'audit_cef' in st.session_state and st.session_state['audit_cef'] is not None:
                 st.dataframe(st.session_state['audit_cef'])
+
 
 
 
